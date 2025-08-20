@@ -41,6 +41,14 @@ def fmt_num(x, digits=2):
         return "-"
     return f"{x:,.{digits}f}"
 
+def clean_label(x):
+    if pd.isna(x):
+        return None
+    s = str(x).strip()
+    if s == "" or s.lower() in ("nan", "none") or s == "0":
+        return None
+    return s
+
 # ====================== Upload ======================
 file = st.file_uploader(
     "上傳 Excel 或 CSV 檔（固定欄位版；不需要任何操作）",
@@ -55,17 +63,14 @@ if not file:
 df_raw = read_any(file)
 
 # 以「欄位位置」為主（0 起算）：D=3, E=4, F=5, G=6, H=7, I=8, J=9, K=10, L=11, M=12
-# 若使用者表頭名稱恰好符合，也同時提供名稱對應的回退判斷
 def get_col_by_pos_or_name(df, pos, name_candidates):
     cols = df.columns.tolist()
     try:
         col_by_pos = df.columns[pos]
     except Exception:
         col_by_pos = None
-    # 優先用位置
     if col_by_pos is not None:
         return col_by_pos
-    # 回退用名稱
     for n in name_candidates:
         if n in cols:
             return n
@@ -102,6 +107,11 @@ df = df_raw.rename(columns={
     col_dC:"經銷商C", col_rC:"經銷C比",
 }).copy()
 
+# 清理字串欄位空白
+for c in ["建設公司","營造公司","水電公司","經銷商A","經銷商B","經銷商C"]:
+    if c in df.columns:
+        df[c] = df[c].apply(lambda x: str(x).strip() if pd.notna(x) else x)
+
 df["年使用量_萬"] = df["年使用量_萬"].apply(coerce_num)
 for c in ["經銷A比","經銷B比","經銷C比"]:
     if c in df.columns:
@@ -116,7 +126,7 @@ if "經銷商C" in df.columns and "經銷C比" in df.columns:
     dealer_blocks.append(df[["建設公司","營造公司","水電公司","年使用量_萬","經銷商C","經銷C比"]].rename(columns={"經銷商C":"經銷商","經銷C比":"配比"}))
 
 rel = pd.concat(dealer_blocks, ignore_index=True) if dealer_blocks else pd.DataFrame(columns=["建設公司","營造公司","水電公司","年使用量_萬","經銷商","配比"])
-rel["經銷商"] = rel["經銷商"].replace({0: np.nan, "0": np.nan, "": np.nan}).astype("string")
+rel["經銷商"] = rel["經銷商"].apply(clean_label)
 rel = rel.dropna(subset=["經銷商"]).copy()
 rel["承接量_萬"] = rel["年使用量_萬"] * rel["配比"]
 rel["承接量_元"] = rel["承接量_萬"] * 10000
@@ -227,10 +237,15 @@ with tab_dash:
 
     st.markdown("---")
     st.subheader("關係流向圖（建設→營造→水電→經銷）")
-    devs = df["建設公司"].dropna().unique().tolist()
-    cons = df["營造公司"].dropna().unique().tolist()
-    meps = df["水電公司"].dropna().unique().tolist()
-    deas = rel["經銷商"].dropna().unique().tolist()
+    # 準備節點（清理空白與無效值）
+    devs = [clean_label(x) for x in df["建設公司"].unique().tolist()]
+    cons = [clean_label(x) for x in df["營造公司"].unique().tolist()]
+    meps = [clean_label(x) for x in df["水電公司"].unique().tolist()]
+    deas = [clean_label(x) for x in rel["經銷商"].unique().tolist()]
+    devs = [x for x in devs if x]
+    cons = [x for x in cons if x]
+    meps = [x for x in meps if x]
+    deas = [x for x in deas if x]
 
     nodes = (
         [f"建設｜{d}" for d in devs] +
@@ -240,40 +255,50 @@ with tab_dash:
     )
     node_index = {name: i for i, name in enumerate(nodes)}
 
-    # 建設->營造
-    s1, t1_, v1 = [], [], []
+    def add_link(src_label, tgt_label, val):
+        # 安全處理：若節點不存在，動態加入；若標籤無效則忽略
+        if not src_label or not tgt_label:
+            return [], [], []
+        if src_label not in node_index:
+            node_index[src_label] = len(nodes)
+            nodes.append(src_label)
+        if tgt_label not in node_index:
+            node_index[tgt_label] = len(nodes)
+            nodes.append(tgt_label)
+        return [node_index[src_label]], [node_index[tgt_label]], [max(val, 0)]
+
+    sources, targets, values = [], [], []
+
+    # 建設->營造：用年使用量_萬總和
     link1 = (df.groupby(["建設公司","營造公司"], dropna=False)["年使用量_萬"].sum().reset_index())
     for _, r in link1.iterrows():
-        s1.append(node_index[f"建設｜{r['建設公司']}"])
-        t1_.append(node_index[f"營造｜{r['營造公司']}"])
-        v1.append(max(r["年使用量_萬"], 0))
+        s_label = f"建設｜{clean_label(r['建設公司'])}"
+        t_label = f"營造｜{clean_label(r['營造公司'])}"
+        s, t, v = add_link(s_label, t_label, r["年使用量_萬"] if pd.notna(r["年使用量_萬"]) else 0)
+        sources += s; targets += t; values += v
 
-    # 營造->水電
-    s2, t2_, v2 = [], [], []
+    # 營造->水電：用年使用量_萬總和
     link2 = (df.groupby(["營造公司","水電公司"], dropna=False)["年使用量_萬"].sum().reset_index())
     for _, r in link2.iterrows():
-        s2.append(node_index[f"營造｜{r['營造公司']}"])
-        t2_.append(node_index[f"水電｜{r['水電公司']}"])
-        v2.append(max(r["年使用量_萬"], 0))
+        s_label = f"營造｜{clean_label(r['營造公司'])}"
+        t_label = f"水電｜{clean_label(r['水電公司'])}"
+        s, t, v = add_link(s_label, t_label, r["年使用量_萬"] if pd.notna(r["年使用量_萬"]) else 0)
+        sources += s; targets += t; values += v
 
-    # 水電->經銷（用承接量_萬）
-    s3, t3_, v3 = [], [], []
+    # 水電->經銷：用承接量_萬總和
     link3 = (rel.groupby(["水電公司","經銷商"], dropna=False)["承接量_萬"].sum().reset_index())
     for _, r in link3.iterrows():
-        s3.append(node_index[f"水電｜{r['水電公司']}"])
-        t3_.append(node_index[f"經銷｜{r['經銷商']}"])
-        v3.append(max(r["承接量_萬"], 0))
+        s_label = f"水電｜{clean_label(r['水電公司'])}"
+        t_label = f"經銷｜{clean_label(r['經銷商'])}"
+        s, t, v = add_link(s_label, t_label, r["承接量_萬"] if pd.notna(r["承接量_萬"]) else 0)
+        sources += s; targets += t; values += v
 
-    source = s1 + s2 + s3
-    target = t1_ + t2_ + t3_
-    value  = v1 + v2 + v3
-
-    if len(source) == 0:
+    if len(sources) == 0:
         st.info("資料不足，無法生成關係流。")
     else:
         fig = go.Figure(data=[go.Sankey(
             node=dict(pad=12, thickness=20, line=dict(width=0.5), label=nodes),
-            link=dict(source=source, target=target, value=value)
+            link=dict(source=sources, target=targets, value=values)
         )])
         fig.update_layout(title_text="建設→營造→水電→經銷 關係流（以用量/承接量為權重）", font_size=12)
         st.plotly_chart(fig, use_container_width=True)
