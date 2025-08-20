@@ -4,7 +4,7 @@ import streamlit as st
 import plotly.express as px
 
 st.set_page_config(page_title="Excel 分析網站", page_icon="📊", layout="wide")
-st.title("📊 Excel 分析網站（免安裝版）")
+st.title("📊 百大建商關係表")
 st.caption("上傳 Excel/CSV → 過濾與彙整 → 自訂欄位 → 圖表 → 下載結果")
 
 # 1) 上傳檔案
