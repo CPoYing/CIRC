@@ -1,14 +1,13 @@
 import io
-import re
 import pandas as pd
 import numpy as np
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="百大建商｜關係鏈分析儀表板（自動版）", page_icon="🏗️", layout="wide")
-st.title("🏗️ 百大建商｜關係鏈分析儀表板（自動版）")
-st.caption("上傳 Excel/CSV → 自動欄位辨識 → 關係拆解與配比 → 多視角儀表板")
+st.set_page_config(page_title="百大建商｜固定欄位版 關係鏈儀表板", page_icon="🏗️", layout="wide")
+st.title("🏗️ 百大建商｜固定欄位版 關係鏈儀表板")
+st.caption("固定辨識：D=建設、E=營造、F=水電、G=年使用量(萬元)、H/J/L=經銷商、I/K/M=配比 → 自動拆解與分析")
 
 # ====================== Helpers ======================
 @st.cache_data
@@ -37,16 +36,6 @@ def normalize_ratio(series):
         return s / 100.0
     return s
 
-def try_pick(cols, candidates):
-    for c in candidates:
-        if c in cols:
-            return c
-    # fuzzy contains
-    for c in cols:
-        if any(key in str(c) for key in candidates):
-            return c
-    return None
-
 def fmt_num(x, digits=2):
     if pd.isna(x):
         return "-"
@@ -54,7 +43,7 @@ def fmt_num(x, digits=2):
 
 # ====================== Upload ======================
 file = st.file_uploader(
-    "上傳 Excel 或 CSV 檔（不提供側邊操作，系統將自動分析）",
+    "上傳 Excel 或 CSV 檔（固定欄位版；不需要任何操作）",
     type=["xlsx", "xls", "csv"],
     help="最多 200 MB；Excel 需使用 openpyxl 解析",
 )
@@ -64,39 +53,53 @@ if not file:
     st.stop()
 
 df_raw = read_any(file)
-cols = df_raw.columns.tolist()
 
-# ====================== Auto column detection ======================
-dev_col = try_pick(cols, ["建商", "建設公司", "建設公司(業主)"])
-con_col = try_pick(cols, ["營造公司", "營造商"])
-mep_col = try_pick(cols, ["水電全名", "水電公司", "機電公司", "機電廠商"])
-vol_col = try_pick(cols, ["年使用量/萬", "年使用量(萬)", "用量_萬"])
+# 以「欄位位置」為主（0 起算）：D=3, E=4, F=5, G=6, H=7, I=8, J=9, K=10, L=11, M=12
+# 若使用者表頭名稱恰好符合，也同時提供名稱對應的回退判斷
+def get_col_by_pos_or_name(df, pos, name_candidates):
+    cols = df.columns.tolist()
+    try:
+        col_by_pos = df.columns[pos]
+    except Exception:
+        col_by_pos = None
+    # 優先用位置
+    if col_by_pos is not None:
+        return col_by_pos
+    # 回退用名稱
+    for n in name_candidates:
+        if n in cols:
+            return n
+    return None
 
-dA_col = try_pick(cols, ["經銷商A", "經銷A", "經銷商1"])
-rA_col = try_pick(cols, ["經銷A佔比(%)", "經銷商A配比", "A配比"])
-dB_col = try_pick(cols, ["經銷商B", "經銷B", "經銷商2"])
-rB_col = try_pick(cols, ["經銷B佔比(%)", "經銷商B配比", "B配比"])
-dC_col = try_pick(cols, ["經銷商C", "經銷Ｃ", "經銷商3"])
-rC_col = try_pick(cols, ["經銷Ｃ佔比(%)", "經銷C佔比(%)", "經銷商C配比", "C配比"])
+col_dev = get_col_by_pos_or_name(df_raw, 3, ["建商","建設公司","建設公司(業主)"])
+col_con = get_col_by_pos_or_name(df_raw, 4, ["營造公司","營造商"])
+col_mep = get_col_by_pos_or_name(df_raw, 5, ["水電全名","水電公司","機電公司","機電廠商"])
+col_vol = get_col_by_pos_or_name(df_raw, 6, ["年使用量/萬","年使用量(萬)","用量_萬"])
 
-with st.expander("🔎 欄位自動辨識結果（僅顯示，不可操作）", expanded=True):
-    st.write(pd.DataFrame({
-        "角色": ["建設公司","營造公司","水電公司","年使用量(萬)","經銷A","配比A","經銷B","配比B","經銷C","配比C"],
-        "對應欄位": [dev_col, con_col, mep_col, vol_col, dA_col, rA_col, dB_col, rB_col, dC_col, rC_col]
-    }))
+col_dA = get_col_by_pos_or_name(df_raw, 7, ["經銷商A","經銷A","經銷商1"])
+col_rA = get_col_by_pos_or_name(df_raw, 8, ["經銷A佔比(%)","經銷商A配比","A配比"])
+col_dB = get_col_by_pos_or_name(df_raw, 9, ["經銷商B","經銷B","經銷商2"])
+col_rB = get_col_by_pos_or_name(df_raw, 10, ["經銷B佔比(%)","經銷商B配比","B配比"])
+col_dC = get_col_by_pos_or_name(df_raw, 11, ["經銷商C","經銷Ｃ","經銷商3"])
+col_rC = get_col_by_pos_or_name(df_raw, 12, ["經銷Ｃ佔比(%)","經銷C佔比(%)","經銷商C配比","C配比"])
 
-required = [dev_col, con_col, mep_col, vol_col]
-missing = [r for r, c in zip(["建設公司","營造公司","水電公司","年使用量(萬)"], required) if c is None]
-if missing:
-    st.error(f"缺少必要欄位：{', '.join(missing)}。請確認資料表欄名。")
+required = [col_dev, col_con, col_mep, col_vol]
+if any(c is None for c in required):
+    st.error("找不到必要欄位（依欄位位置 D/E/F/G 取得失敗）。請確認資料的欄序是否正確。")
     st.stop()
+
+with st.expander("🔎 欄位對應（固定版；僅供查看）", expanded=True):
+    st.write(pd.DataFrame({
+        "角色":["建設公司(D)","營造公司(E)","水電公司(F)","年使用量(萬)(G)","經銷商(H)","配比(I)","經銷商(J)","配比(K)","經銷商(L)","配比(M)"],
+        "欄位":[col_dev,col_con,col_mep,col_vol,col_dA,col_rA,col_dB,col_rB,col_dC,col_rC]
+    }))
 
 # ====================== Transform ======================
 df = df_raw.rename(columns={
-    dev_col: "建設公司", con_col: "營造公司", mep_col: "水電公司", vol_col: "年使用量_萬",
-    dA_col or "經銷商A": "經銷商A", rA_col or "經銷A佔比(%)": "經銷A比",
-    dB_col or "經銷商B": "經銷商B", rB_col or "經銷B佔比(%)": "經銷B比",
-    dC_col or "經銷商C": "經銷商C", rC_col or "經銷Ｃ佔比(%)": "經銷C比",
+    col_dev:"建設公司", col_con:"營造公司", col_mep:"水電公司", col_vol:"年使用量_萬",
+    col_dA:"經銷商A", col_rA:"經銷A比",
+    col_dB:"經銷商B", col_rB:"經銷B比",
+    col_dC:"經銷商C", col_rC:"經銷C比",
 }).copy()
 
 df["年使用量_萬"] = df["年使用量_萬"].apply(coerce_num)
@@ -118,39 +121,48 @@ rel = rel.dropna(subset=["經銷商"]).copy()
 rel["承接量_萬"] = rel["年使用量_萬"] * rel["配比"]
 rel["承接量_元"] = rel["承接量_萬"] * 10000
 
-# 配比檢查
+# 基礎關係鏈數量
+count_dev = df["建設公司"].nunique()
+count_con = df["營造公司"].nunique()
+count_mep = df["水電公司"].nunique()
+count_dea = rel["經銷商"].nunique()
+
+pairs_dev_con = df[["建設公司","營造公司"]].dropna().drop_duplicates().shape[0]
+pairs_con_mep = df[["營造公司","水電公司"]].dropna().drop_duplicates().shape[0]
+pairs_mep_dea = rel[["水電公司","經銷商"]].dropna().drop_duplicates().shape[0]
+
+# 配比檢查與依賴度
 ratio_check = rel.groupby(["建設公司","營造公司","水電公司"], dropna=False)["配比"].sum().reset_index()
 ratio_check["配比合計"] = ratio_check["配比"]
 ratio_check["是否=1(±0.01)"] = np.isclose(ratio_check["配比合計"], 1.0, atol=0.01)
 
-# 風險標籤
-risk = ratio_check.copy()
-risk["標籤"] = np.where(~risk["是否=1(±0.01)"], "配比未齊", "")
-# 單一經銷商依賴度
 single_dep = (rel.groupby(["水電公司","經銷商"], dropna=False)["配比"].sum().reset_index())
 top_ratio = single_dep.sort_values(["水電公司","配比"], ascending=[True, False]).groupby("水電公司").head(1)
 top_ratio["單一依賴>80%"] = top_ratio["配比"] >= 0.8
 
 # ====================== Tabs ======================
-tab_raw, tab_dash = st.tabs(["📄 原始資料", "📊 分析儀表板（自動）"])
+tab_raw, tab_dash = st.tabs(["📄 原始資料", "📊 分析儀表板"])
 
 with tab_raw:
     st.subheader("原始資料預覽")
     st.dataframe(df_raw, use_container_width=True)
-    st.caption("此分頁僅顯示你上傳的原始內容（未拆分經銷商/未計算）。")
 
 with tab_dash:
-    # ===== KPIs =====
     st.subheader("總覽 KPI")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("建設公司數", f"{rel['建設公司'].nunique()}")
-    c2.metric("營造公司數", f"{rel['營造公司'].nunique()}")
-    c3.metric("水電公司數", f"{rel['水電公司'].nunique()}")
-    c4.metric("經銷商承接總量(萬元)", fmt_num(rel['承接量_萬'].sum(), 0))
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+    c1.metric("建設公司數", f"{count_dev}")
+    c2.metric("營造公司數", f"{count_con}")
+    c3.metric("水電公司數", f"{count_mep}")
+    c4.metric("經銷商數", f"{count_dea}")
+    c5.metric("建設→營造 關係數", f"{pairs_dev_con}")
+    c6.metric("營造→水電 關係數", f"{pairs_con_mep}")
+    c7.metric("水電→經銷 關係數", f"{pairs_mep_dea}")
 
     st.markdown("---")
+    st.subheader("關係明細（經銷商配比展開）")
+    st.dataframe(rel, use_container_width=True)
 
-    # ===== Analyses =====
+    st.markdown("---")
     a1, a2 = st.columns([2,1])
     with a1:
         st.subheader("TOP 經銷商承接量 (前20)")
@@ -159,14 +171,13 @@ with tab_dash:
         fig = px.bar(dea_rank, x="經銷商", y="承接量_萬", title="經銷商承接量(萬元)")
         st.plotly_chart(fig, use_container_width=True)
     with a2:
-        st.subheader("經銷商市場占比")
+        st.subheader("經銷商承接占比")
         share = (rel.groupby("經銷商", dropna=False)["承接量_萬"]
                  .sum().reset_index().sort_values("承接量_萬", ascending=False))
         fig = px.pie(share, names="經銷商", values="承接量_萬", title="承接量占比")
         st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
-
     b1, b2 = st.columns(2)
     with b1:
         st.subheader("TOP 水電公司（加權使用量）")
@@ -189,20 +200,18 @@ with tab_dash:
             st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
-
-    st.subheader("經銷商競合熱度（同水電的配比分散度）")
+    st.subheader("經銷商競合熱度（同水電的配比分散）")
     comp = (rel.groupby(["水電公司", "經銷商"], dropna=False)["配比"]
             .sum().reset_index())
     pivot = comp.pivot(index="水電公司", columns="經銷商", values="配比").fillna(0.0)
     st.dataframe(pivot, use_container_width=True)
-    st.caption("數值為配比(0~1)，行內加總應 ≈ 1。行內越平均，代表競爭越激烈。")
+    st.caption("每一列為單一水電公司，各欄為經銷商配比（加總≈1）。分散越平均，競爭越激烈。")
 
     st.markdown("---")
-
     st.subheader("風險雷達")
     cA, cB = st.columns(2)
     with cA:
-        st.markdown("**配比檢查（非 1 的水電公司）**")
+        st.markdown("**配比未齊（合計≠1）**")
         bad = ratio_check[~ratio_check["是否=1(±0.01)"]].copy()
         if bad.empty:
             st.success("所有水電公司配比加總皆 ≈ 1。")
@@ -217,11 +226,10 @@ with tab_dash:
             st.dataframe(risky[["水電公司","經銷商","配比","單一依賴>80%"]], use_container_width=True)
 
     st.markdown("---")
-
     st.subheader("關係流向圖（建設→營造→水電→經銷）")
-    devs = rel["建設公司"].dropna().unique().tolist()
-    cons = rel["營造公司"].dropna().unique().tolist()
-    meps = rel["水電公司"].dropna().unique().tolist()
+    devs = df["建設公司"].dropna().unique().tolist()
+    cons = df["營造公司"].dropna().unique().tolist()
+    meps = df["水電公司"].dropna().unique().tolist()
     deas = rel["經銷商"].dropna().unique().tolist()
 
     nodes = (
@@ -234,21 +242,21 @@ with tab_dash:
 
     # 建設->營造
     s1, t1_, v1 = [], [], []
-    link1 = (rel.groupby(["建設公司","營造公司"], dropna=False)["承接量_萬"].sum().reset_index())
+    link1 = (df.groupby(["建設公司","營造公司"], dropna=False)["年使用量_萬"].sum().reset_index())
     for _, r in link1.iterrows():
         s1.append(node_index[f"建設｜{r['建設公司']}"])
         t1_.append(node_index[f"營造｜{r['營造公司']}"])
-        v1.append(max(r["承接量_萬"], 0))
+        v1.append(max(r["年使用量_萬"], 0))
 
     # 營造->水電
     s2, t2_, v2 = [], [], []
-    link2 = (rel.groupby(["營造公司","水電公司"], dropna=False)["承接量_萬"].sum().reset_index())
+    link2 = (df.groupby(["營造公司","水電公司"], dropna=False)["年使用量_萬"].sum().reset_index())
     for _, r in link2.iterrows():
         s2.append(node_index[f"營造｜{r['營造公司']}"])
         t2_.append(node_index[f"水電｜{r['水電公司']}"])
-        v2.append(max(r["承接量_萬"], 0))
+        v2.append(max(r["年使用量_萬"], 0))
 
-    # 水電->經銷
+    # 水電->經銷（用承接量_萬）
     s3, t3_, v3 = [], [], []
     link3 = (rel.groupby(["水電公司","經銷商"], dropna=False)["承接量_萬"].sum().reset_index())
     for _, r in link3.iterrows():
@@ -267,25 +275,24 @@ with tab_dash:
             node=dict(pad=12, thickness=20, line=dict(width=0.5), label=nodes),
             link=dict(source=source, target=target, value=value)
         )])
-        fig.update_layout(title_text="建設→營造→水電→經銷 關係流（承接量_萬）", font_size=12)
+        fig.update_layout(title_text="建設→營造→水電→經銷 關係流（以用量/承接量為權重）", font_size=12)
         st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
     st.subheader("匯出")
     csv_bytes = rel.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("下載 關係明細 CSV（未篩選）", data=csv_bytes, file_name="relations_detail.csv", mime="text/csv")
+    st.download_button("下載 關係明細 CSV", data=csv_bytes, file_name="relations_detail_fixed.csv", mime="text/csv")
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_raw.to_excel(writer, index=False, sheet_name="原始資料")
+        df.to_excel(writer, index=False, sheet_name="主檔(固定欄位命名)")
         rel.to_excel(writer, index=False, sheet_name="關係明細")
         ratio_check.to_excel(writer, index=False, sheet_name="配比檢查")
         top_ratio.to_excel(writer, index=False, sheet_name="單一依賴檢查")
     st.download_button(
         "下載 Excel（多工作表）",
         data=output.getvalue(),
-        file_name="relations_dashboard_auto.xlsx",
+        file_name="relations_dashboard_fixed.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
-
