@@ -22,7 +22,7 @@ def read_any(file):
         return pd.read_excel(file, engine="openpyxl")
 
 def _coerce_num(s):
-    \"\"\"Coerce to float, handling commas/percents/strings.\"\"\"
+    """Coerce to float, handling commas/percents/strings."""
     if s is None:
         return np.nan
     if isinstance(s, (int, float, np.number)):
@@ -36,7 +36,7 @@ def _coerce_num(s):
         return np.nan
 
 def normalize_ratio(series):
-    \"\"\"Normalize ratio to 0~1; if it looks like 0~100, divide by 100.\"\"\"
+    """Normalize ratio to 0~1; if it looks like 0~100, divide by 100."""
     s = series.apply(_coerce_num)
     if s.max(skipna=True) is not None and s.max(skipna=True) > 1.000001:
         return s / 100.0
@@ -291,4 +291,3 @@ st.download_button(
     file_name="relations_dashboard_export.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
-
