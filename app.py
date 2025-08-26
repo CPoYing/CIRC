@@ -1,7 +1,7 @@
 # app.py － 百大建商｜關係鏈分析（單頁搜尋 v9）
 # 此版重點：
 # - 建設公司：快速總攬改為「合作對象」單區塊（營造公司 / 水電公司 / 終端經銷商）
-# - 經銷商：快速總攬只保留「合作水電」，並新增「該經銷商配比」欄位（兩位小數百分比）
+# - 經銷商：快速總攬只保留「合作水電」，並新增「採購比例」欄位（兩位小數百分比）
 # - 其他維持 v8：預設圓餅圖、Pastel 色系、KPI 橫排、清除快取用 st.rerun()
 
 import io
@@ -277,7 +277,7 @@ elif role == "水電公司":
         down_dealer["配比"] = down_dealer["配比"].apply(pct_str)
 
 elif role == "經銷商":
-    # 經銷商視圖：保留合作水電，並加上「該經銷商配比」
+    # 經銷商視圖：保留合作水電，並加上「採購比例」
     df_sel = rel[rel["經銷商"] == target].merge(
         df, on=["建設公司","營造公司","水電公司"], how="left", suffixes=("","_df")
     )
@@ -285,9 +285,9 @@ elif role == "經銷商":
     # 加上該經銷商在各水電的平均配比
     r_df = (rel[rel["經銷商"] == target]
             .groupby("水電公司")["配比"].mean().reset_index()
-            .rename(columns={"配比":"該經銷商配比"}))
+            .rename(columns={"配比":"採購比例"}))
     if not r_df.empty:
-        r_df["該經銷商配比"] = r_df["該經銷商配比"].apply(pct_str)
+        r_df["採購比例"] = r_df["採購比例"].apply(pct_str)
         down_mep = down_mep.merge(r_df, on="水電公司", how="left")
     # 上游表不需要
     up_tbl = None
