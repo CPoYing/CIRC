@@ -1,8 +1,9 @@
-# app.py － 百大建商｜關係鏈分析（單頁搜尋 v7）
-# 重點：
-# - 修正：競爭者區塊重複顯示（v6 有兩個 subheader）
-# - 美化 UI：Tabs 分區（概覽 / 合作對象 / 競爭者 / 匯出）、KPI 卡片、Top N 控制、統一樣式
-# - 延續 v6：建設/營造 → 經銷商「平均配比」按水電等權平均；所有 % 四捨五入到兩位
+# app.py － 百大建商｜關係鏈分析（單頁搜尋 v8）
+# 變更：
+# 1) KPI 橫排（st.columns + st.metric）
+# 2) 移除 Top N 控制
+# 3) 圖表預設「圓餅圖」＋顏色使用 Pastel & simple_white
+# 4) 清除快取使用 st.rerun()
 
 import io
 import re
@@ -18,27 +19,23 @@ import streamlit as st
 import plotly.express as px
 
 # ====================== 基本設定與樣式 ======================
-st.set_page_config(page_title="百大建商｜關係鏈分析（單頁搜尋 v7）", page_icon="🏗️", layout="wide")
-st.title("🏗️ 百大建商｜關係鏈分析（單頁搜尋 v7）")
-# 版本浮水印（方便你確認正式站跑到哪一版）
+st.set_page_config(page_title="百大建商｜關係鏈分析（單頁搜尋 v8）", page_icon="🏗️", layout="wide")
+st.title("🏗️ 百大建商｜關係鏈分析（單頁搜尋 v8）")
+# 版本浮水印
 try:
     p = Path(__file__)
     st.caption(
-        f"🔖 版本：v7 | 檔案：{p.name} | 修改時間：{datetime.fromtimestamp(p.stat().st_mtime):%Y-%m-%d %H:%M:%S}"
+        f"🔖 版本：v8 | 檔案：{p.name} | 修改時間：{datetime.fromtimestamp(p.stat().st_mtime):%Y-%m-%d %H:%M:%S}"
     )
 except Exception:
-    st.caption("🔖 版本：v7")
+    st.caption("🔖 版本：v8")
 
-# CSS：簡易卡片 & 表格風格
+# CSS：簡易外觀
 st.markdown(
     """
     <style>
     .chip {display:inline-block; padding:4px 10px; border-radius:999px; background:#F1F5F9; border:1px solid #E2E8F0; font-size:12px; margin-right:8px;}
     .card {padding:16px 16px; border-radius:16px; border:1px solid #E2E8F0; background:#FFFFFF; box-shadow:0 1px 2px rgba(0,0,0,0.04); margin-bottom:12px;}
-    .kpi {display:flex; gap:16px; flex-wrap:wrap;}
-    .kpi .item {flex:1; min-width:180px; padding:12px 14px; border-radius:14px; background:#F8FAFC; border:1px solid #E2E8F0;}
-    .kpi .label {font-size:12px; color:#64748B;}
-    .kpi .value {font-size:22px; font-weight:700; color:#0F172A; margin-top:2px;}
     .stTabs [data-baseweb="tab-list"] { gap: 6px; }
     .stTabs [data-baseweb="tab"] { border: 1px solid #e5e7eb; padding: 6px 12px; border-radius: 10px; background: #fafafa; }
     .stTabs [aria-selected="true"] { background: #eef2ff !important; border-color:#c7d2fe !important; }
@@ -200,8 +197,8 @@ mep_vol_map = df.groupby("水電公司")["年使用量_萬"].apply(
 
 # ====================== 角色選擇 & 篩選控件 ======================
 role = st.radio("角色", ["建設公司", "營造公司", "水電公司", "經銷商"], horizontal=True)
-chart_type = st.radio("圖表", ["長條圖", "圓餅圖"], horizontal=True)
-top_n = st.slider("圖表顯示前 N 名", min_value=3, max_value=30, value=10, step=1)
+# 預設改為「圓餅圖」
+chart_type = st.radio("圖表", ["圓餅圖", "長條圖"], index=0, horizontal=True)
 
 def options_for(role):
     if role == "建設公司":
@@ -238,10 +235,15 @@ def draw_chart(df_plot, name_col, value_col, title):
     if df_plot is None or df_plot.empty:
         st.info("沒有資料可視覺化。")
         return
+    pastel = px.colors.qualitative.Pastel
     if chart_type == "長條圖":
-        fig = px.bar(df_plot.head(top_n), x=name_col, y=value_col, title=title)
+        # 用 Pastel 並移除多餘網格
+        fig = px.bar(df_plot, x=name_col, y=value_col, title=title,
+                     color=name_col, color_discrete_sequence=pastel, template="simple_white")
+        fig.update_layout(showlegend=False)
     else:
-        fig = px.pie(df_plot, names=name_col, values=value_col, title=title)
+        fig = px.pie(df_plot, names=name_col, values=value_col, title=title,
+                     color=name_col, color_discrete_sequence=pastel, template="simple_white")
     st.plotly_chart(fig, use_container_width=True)
 
 # ====================== 資料切片 & KPI ======================
@@ -295,11 +297,10 @@ elif role == "經銷商":
     )
     down_mep = share_table(df_sel, ["水電公司"], "水電公司")
 
-# KPI 區塊
+# ===== KPI（橫排）=====
 with st.container():
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div class="kpi">', unsafe_allow_html=True)
-    # 基本 KPI：案件數、涉及建設/營造/水電/經銷的家數
+    c1, c2, c3, c4, c5 = st.columns(5)
     cnt_rows = len(df_sel) if isinstance(df_sel, pd.DataFrame) else 0
     n_dev = df_sel["建設公司"].nunique() if "建設公司" in df_sel.columns else 0
     n_con = df_sel["營造公司"].nunique() if "營造公司" in df_sel.columns else 0
@@ -309,15 +310,11 @@ with st.container():
     else:
         n_dealer = df_sel["經銷商"].nunique() if "經銷商" in df_sel.columns else 0
 
-    def kpi(label, value): 
-        st.markdown(f'<div class="item"><div class="label">{label}</div><div class="value">{value}</div></div>', unsafe_allow_html=True)
-
-    kpi("資料筆數", f"{cnt_rows:,}")
-    kpi("建設家數", f"{n_dev:,}")
-    kpi("營造家數", f"{n_con:,}")
-    kpi("水電家數", f"{n_mep:,}")
-    kpi("經銷家數", f"{n_dealer:,}")
-    st.markdown('</div>', unsafe_allow_html=True)
+    c1.metric("資料筆數", f"{cnt_rows:,}")
+    c2.metric("建設家數", f"{n_dev:,}")
+    c3.metric("營造家數", f"{n_con:,}")
+    c4.metric("水電家數", f"{n_mep:,}")
+    c5.metric("經銷家數", f"{n_dealer:,}")
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ====================== Tabs：概覽 / 合作對象 / 競爭者 / 匯出 ======================
@@ -339,7 +336,6 @@ with tab_overview:
         elif role == "水電公司":
             st.write("・經銷商（平均配比）")
             st.dataframe(down_dealer if down_dealer is not None and not down_dealer.empty else pd.DataFrame(), use_container_width=True)
-            # 水電年用量備註
             mep_vol = df_sel["年使用量_萬"].dropna().unique()
             memo = f"{mep_vol[0]} 萬" if len(mep_vol)>0 else "—"
             st.info(f"📌 預估年使用量（僅備註，不參與計算）：{memo}")
@@ -349,7 +345,7 @@ with tab_overview:
 
 with tab_partners:
     st.markdown("#### 📈 視覺化")
-    # 圖表
+    # 圖表（預設圓餅、Pastel、simple_white）
     if role in ["建設公司","營造公司"] and down_mep is not None and not down_mep.empty:
         draw_chart(down_mep, down_mep.columns[0], "次數", f"{role} → 水電公司 出現次數")
     if role == "水電公司" and down_dealer_raw is not None and not down_dealer_raw.empty:
@@ -363,7 +359,6 @@ with tab_partners:
 
 with tab_comp:
     st.markdown("#### ⚔️ 競爭者")
-    # —— 定義競爭者表格（函式放這裡即可；避免重複的 subheader）——
     def competitor_table_water(df_base, target_mep):
         g = df_base[df_base["水電公司"].notna()]
         cons = g[g["水電公司"] == target_mep]["營造公司"].dropna().unique().tolist()
@@ -374,16 +369,13 @@ with tab_comp:
         return co.sort_values("共同出現次數", ascending=False)
 
     def competitor_table_dealer(rel_base, target_dealer):
-        # 目標經銷商的客戶
         target_clients = rel_base[rel_base["經銷商"] == target_dealer]["水電公司"].dropna().unique().tolist()
         target_client_set = set(target_clients)
         target_total_clients = len(target_client_set)
 
-        # 目標在每個水電的平均配比
         tgt_ratio_map = (rel_base[rel_base["經銷商"] == target_dealer]
                          .groupby("水電公司")["配比"].mean().to_dict())
 
-        # 目標總市場額度 = ∑(年用量 × 目標配比)
         target_total_market = 0.0
         for mep in target_client_set:
             vol = float(mep_vol_map.get(mep, 0.0) or 0.0)
@@ -446,7 +438,6 @@ with tab_comp:
         out = out.assign(_order=cat).sort_values(["_order","重疊市場占比","共同客戶數"], ascending=[True, False, False]).drop(columns="_order")
         return out
 
-    # —— 顯示競爭者（只在這個 Tab 顯示一次，避免重複）——
     if role == "水電公司":
         comp_tbl = competitor_table_water(df, target)
         st.dataframe(comp_tbl, use_container_width=True)
@@ -476,12 +467,12 @@ with tab_export:
     st.download_button(
         "下載 Excel",
         data=output.getvalue(),
-        file_name="relations_search_dashboard_v7.xlsx",
+        file_name="relations_search_dashboard_v8.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-# 可選：一鍵清快取
+# 清除快取（修正：使用 st.rerun）
 with st.expander("🧹 清除快取"):
     if st.button("清除 @st.cache_data 並重載"):
         st.cache_data.clear()
-        st.experimental_rerun()
+        st.rerun()
