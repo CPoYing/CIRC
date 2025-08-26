@@ -1,17 +1,18 @@
-# app.py － 百大建商｜關係鏈分析（單頁搜尋 v5）
-# 重點：保留「上游 / 直接合作對象」區塊 + 強化「經銷商競爭者」指標 + 圖表可切換圓餅/長條 + 百分比兩位小數
+# app.py － 百大建商｜關係鏈分析（單頁搜尋 v6）
+# 更新：建設/營造 的「經銷商（平均配比）」= 以「水電公司」為單位先求配比，再對「該角色名下的所有水電」平均（每間水電只算一次）
 
 import io
 import re
 import math
 from decimal import Decimal, ROUND_HALF_UP
+from collections import defaultdict
 import pandas as pd
 import numpy as np
 import streamlit as st
 import plotly.express as px
 
-st.set_page_config(page_title="百大建商｜關係鏈分析（單頁搜尋 v5）", page_icon="🏗️", layout="wide")
-st.title("🏗️ 百大建商｜關係鏈分析（單頁搜尋 v5）")
+st.set_page_config(page_title="百大建商｜關係鏈分析（單頁搜尋 v6）", page_icon="🏗️", layout="wide")
+st.title("🏗️ 百大建商｜關係鏈分析（單頁搜尋 v6）")
 st.caption("D=建設、E=營造、F=水電、G=年使用量(萬元；僅水電視圖顯示備註)、H/J/L=經銷商、I/K/M=配比。選任一公司，查看上游/直接合作對象與競爭者。")
 
 # ====================== Helpers ======================
@@ -143,6 +144,31 @@ mep_vol_map = df.groupby("水電公司")["年使用量_萬"].apply(
     lambda s: s.dropna().iloc[0] if s.dropna().size>0 else np.nan
 ).to_dict()
 
+# ========== 新邏輯：依「水電公司」平均經銷配比（每間水電只算一次） ==========
+def avg_dealer_ratio_across_unique_mep(rel_subset: pd.DataFrame) -> pd.DataFrame:
+    """對 rel_subset（已按建設或營造過濾）：
+       1) 取出名下的唯一水電清單
+       2) 對每個水電，先求「該水電上的 經銷商→配比」(平均去重)
+       3) 將各水電上的配比在經銷商維度上相加，最後除以『水電家數』
+       4) 沒出現在某水電上的經銷商，視為該水電配比 0（不加分）
+    """
+    meps = [m for m in rel_subset["水電公司"].dropna().unique().tolist() if isinstance(m, str) and m != ""]
+    n = len(meps)
+    if n == 0:
+        return pd.DataFrame(columns=["經銷商","平均配比"])
+    sums = defaultdict(float)
+    for mep in meps:
+        g = rel_subset[rel_subset["水電公司"] == mep]
+        # 先對 (水電, 經銷商) 去重平均
+        rmap = g.groupby("經銷商")["配比"].mean().to_dict()
+        for d, r in rmap.items():
+            if pd.isna(d):
+                continue
+            sums[str(d)] += float(r or 0.0)
+    rows = [(dealer, s / n) for dealer, s in sums.items()]
+    out = pd.DataFrame(rows, columns=["經銷商","平均配比"]).sort_values("平均配比", ascending=False)
+    return out
+
 # ====================== 選擇器 ======================
 role = st.radio("選擇角色", ["建設公司", "營造公司", "水電公司", "經銷商"], horizontal=True)
 chart_type = st.radio("圖表類型", ["長條圖", "圓餅圖"], horizontal=True)
@@ -178,8 +204,8 @@ def share_table(df_in, group_cols, name_col):
     cnt["占比"] = cnt["占比"].apply(pct_str)  # 兩位小數
     return cnt.sort_values("次數", ascending=False)
 
-down_dealer_raw = None  # 圖表用數值版本
-down_dealer = None      # 表格用百分比字串版本
+down_dealer_raw = None  # 圖表用數值
+down_dealer = None      # 表格用百分比字串
 down_mep = None
 up_tbl = None
 
@@ -187,11 +213,9 @@ if role == "建設公司":
     df_sel = df[df["建設公司"] == target]
     up_tbl = share_table(df_sel, ["營造公司"], "營造公司")  # 上游看營造
     down_mep = share_table(df_sel, ["水電公司"], "水電公司")
-    # 經銷商（透過 rel）
+    # ★ 新邏輯：以水電為單位平均配比
     rel_sel = rel[rel["建設公司"] == target]
-    down_dealer_raw = (rel_sel.groupby("經銷商")["配比"].mean()
-                       .reset_index().rename(columns={"配比":"平均配比"})
-                       .sort_values("平均配比", ascending=False))
+    down_dealer_raw = avg_dealer_ratio_across_unique_mep(rel_sel)
     down_dealer = down_dealer_raw.copy()
     if not down_dealer.empty:
         down_dealer["平均配比"] = down_dealer["平均配比"].apply(pct_str)
@@ -200,21 +224,21 @@ elif role == "營造公司":
     df_sel = df[df["營造公司"] == target]
     up_tbl = share_table(df_sel, ["建設公司"], "建設公司")
     down_mep = share_table(df_sel, ["水電公司"], "水電公司")
+    # ★ 新邏輯：以水電為單位平均配比
     rel_sel = rel[rel["營造公司"] == target]
-    down_dealer_raw = (rel_sel.groupby("經銷商")["配比"].mean()
-                       .reset_index().rename(columns={"配比":"平均配比"})
-                       .sort_values("平均配比", ascending=False))
+    down_dealer_raw = avg_dealer_ratio_across_unique_mep(rel_sel)
     down_dealer = down_dealer_raw.copy()
     if not down_dealer.empty:
         down_dealer["平均配比"] = down_dealer["平均配比"].apply(pct_str)
 
 elif role == "水電公司":
     df_sel = df[df["水電公司"] == target]
-    # 上游：服務過的建設×營造（合併顯示）
+    # 上游：建設×營造（合併顯示）
     up_tbl = share_table(df_sel.assign(_公司=df_sel["建設公司"].fillna("")+" × "+df_sel["營造公司"].fillna("")),
                          ["_公司"], "公司")
     down_mep = None
     rel_sel = rel[rel["水電公司"] == target]
+    # 水電視圖：仍為該水電上的實際配比（不需跨水電平均）
     down_dealer_raw = (rel_sel.groupby("經銷商")["配比"].mean()
                        .reset_index().sort_values("配比", ascending=False)
                        .rename(columns={"配比":"配比"}))
@@ -234,7 +258,6 @@ elif role == "經銷商":
     up_tbl = share_table(df_sel.assign(_公司=df_sel["建設公司"].fillna("")+" × "+df_sel["營造公司"].fillna("")),
                          ["_公司"], "公司")
     down_mep = share_table(df_sel, ["水電公司"], "水電公司")
-    # 經銷商本身沒有下游更下游，所以 down_dealer 省略
 
 # 顯示：上游 / 直接合作對象
 col1, col2 = st.columns(2)
@@ -248,7 +271,7 @@ with col2:
         st.write("・直接：水電公司")
         st.dataframe(down_mep if down_mep is not None and not down_mep.empty else pd.DataFrame(),
                      use_container_width=True)
-        st.write("・經銷商（平均配比）")
+        st.write("・經銷商（平均配比｜按水電等權平均）")
         st.dataframe(down_dealer if down_dealer is not None and not down_dealer.empty else pd.DataFrame(),
                      use_container_width=True)
     elif role == "水電公司":
@@ -275,7 +298,7 @@ def competitor_table_water(df_base, target_mep):
     return co.sort_values("共同出現次數", ascending=False)
 
 def competitor_table_dealer(rel_base, target_dealer):
-    """經銷商競爭者：共同客戶/重疊市場（用水電年用量G；你說G只做備註，但此區需市場額度所以納入）"""
+    """經銷商競爭者：共同客戶/重疊市場（用水電年用量G換算額度）"""
     # 目標經銷商客戶（唯一水電）
     target_clients = rel_base[rel_base["經銷商"] == target_dealer]["水電公司"].dropna().unique().tolist()
     target_client_set = set(target_clients)
@@ -351,6 +374,8 @@ def competitor_table_dealer(rel_base, target_dealer):
     return out
 
 # 顯示競爭者
+st.markdown("---")
+st.subheader("⚔️ 競爭者")
 if role == "水電公司":
     comp_tbl = competitor_table_water(df, target)
     st.dataframe(comp_tbl, use_container_width=True)
@@ -392,10 +417,10 @@ if role == "水電公司" and down_dealer_raw is not None and not down_dealer_ra
     draw_chart(down_dealer_raw, "經銷商", "配比", "水電公司 → 經銷商 配比")
 
 if role == "營造公司" and down_dealer_raw is not None and not down_dealer_raw.empty:
-    draw_chart(down_dealer_raw, "經銷商", "平均配比", "營造公司 → 經銷商 平均配比")
+    draw_chart(down_dealer_raw, "經銷商", "平均配比", "營造公司 → 經銷商 平均配比（按水電等權）")
 
 if role == "建設公司" and down_dealer_raw is not None and not down_dealer_raw.empty:
-    draw_chart(down_dealer_raw, "經銷商", "平均配比", "建設公司 → 經銷商 平均配比")
+    draw_chart(down_dealer_raw, "經銷商", "平均配比", "建設公司 → 經銷商 平均配比（按水電等權）")
 
 if role == "經銷商" and down_mep is not None and not down_mep.empty:
     draw_chart(down_mep, "水電公司", "次數", "經銷商 → 水電公司 出現次數")
@@ -411,6 +436,6 @@ with pd.ExcelWriter(output, engine="openpyxl") as writer:
 st.download_button(
     "下載 Excel",
     data=output.getvalue(),
-    file_name="relations_search_dashboard_v5.xlsx",
+    file_name="relations_search_dashboard_v6.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
