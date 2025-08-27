@@ -1,8 +1,8 @@
-# app.py － 百大建商｜關係鏈分析（單頁搜尋 v9）
-# 此版重點：
-# - 建設公司：快速總攬改為「合作對象」單區塊（營造公司 / 水電公司 / 終端經銷商）
-# - 經銷商：快速總攬只保留「合作水電」，並新增「採購比例」欄位（兩位小數百分比）
-# - 其他維持 v8：預設圓餅圖、Pastel 色系、KPI 橫排、清除快取用 st.rerun()
+# app.py － 百大建商｜關係鏈分析（單頁搜尋 v10）
+# 更新要點：
+# - 建設公司：移除競爭者功能；概覽「次數」欄名改「合作次數」；經銷商區塊改名「終端經銷商」
+# - 水電公司：合作對象顯示預估年使用量；圖表以金額(配比×年用量)作為圓餅值
+# - 經銷商：競爭者區塊新增「去重後整體被競爭覆蓋率」(Union overlap≤100%)
 
 import io
 import re
@@ -18,15 +18,15 @@ import streamlit as st
 import plotly.express as px
 
 # ====================== 基本設定與樣式 ======================
-st.set_page_config(page_title="百大建商｜關係鏈分析（單頁搜尋 v9）", page_icon="🏗️", layout="wide")
-st.title("🏗️ 百大建商｜關係鏈分析（單頁搜尋 v9）")
+st.set_page_config(page_title="百大建商｜關係鏈分析（單頁搜尋 v10）", page_icon="🏗️", layout="wide")
+st.title("🏗️ 百大建商｜關係鏈分析（單頁搜尋 v10）")
 try:
     p = Path(__file__)
     st.caption(
-        f"🔖 版本：v9 | 檔案：{p.name} | 修改時間：{datetime.fromtimestamp(p.stat().st_mtime):%Y-%m-%d %H:%M:%S}"
+        f"🔖 版本：v10 | 檔案：{p.name} | 修改時間：{datetime.fromtimestamp(p.stat().st_mtime):%Y-%m-%d %H:%M:%S}"
     )
 except Exception:
-    st.caption("🔖 版本：v9")
+    st.caption("🔖 版本：v10")
 
 st.markdown(
     """
@@ -99,7 +99,7 @@ def get_col_by_pos_or_name(df, pos, name_candidates):
             return n
     return None
 
-# ========== 平均配比（按水電等權） ==========
+# 平均配比（按水電等權）
 def avg_dealer_ratio_across_unique_mep(rel_subset: pd.DataFrame) -> pd.DataFrame:
     meps = [m for m in rel_subset["水電公司"].dropna().unique().tolist() if isinstance(m, str) and m != ""]
     n = len(meps)
@@ -235,21 +235,21 @@ def draw_chart(df_plot, name_col, value_col, title):
                      color=name_col, color_discrete_sequence=pastel, template="simple_white")
     st.plotly_chart(fig, use_container_width=True)
 
-# ====================== 資料切片（供各角色使用） ======================
-down_dealer_raw = None  # 圖用
-down_dealer = None      # 表格用（%）
-down_mep = None
-up_tbl = None
+# ====================== 資料切片 ======================
+down_dealer_raw = None   # 視覺用數值（建設/營造：平均配比；水電：額度_萬）
+down_dealer_tbl = None   # 表格用（％字串或含額度）
+down_mep = None          # 水電公司列表（含次數/占比；經銷商視圖會加配比）
+up_tbl = None            # 上游或合作營造列表
 
 if role == "建設公司":
     df_sel = df[df["建設公司"] == target]
-    up_tbl = share_table(df_sel, ["營造公司"], "營造公司")  # 仍計算以供「合作對象」使用
-    down_mep = share_table(df_sel, ["水電公司"], "水電公司")
+    up_tbl = share_table(df_sel, ["營造公司"], "營造公司")      # for 概覽：營造公司
+    down_mep = share_table(df_sel, ["水電公司"], "水電公司")     # for 概覽：水電公司
     rel_sel = rel[rel["建設公司"] == target]
     down_dealer_raw = avg_dealer_ratio_across_unique_mep(rel_sel)
-    down_dealer = down_dealer_raw.copy()
-    if not down_dealer.empty:
-        down_dealer["平均配比"] = down_dealer["平均配比"].apply(pct_str)
+    down_dealer_tbl = down_dealer_raw.copy()
+    if not down_dealer_tbl.empty:
+        down_dealer_tbl["平均配比"] = down_dealer_tbl["平均配比"].apply(pct_str)
 
 elif role == "營造公司":
     df_sel = df[df["營造公司"] == target]
@@ -257,39 +257,45 @@ elif role == "營造公司":
     down_mep = share_table(df_sel, ["水電公司"], "水電公司")
     rel_sel = rel[rel["營造公司"] == target]
     down_dealer_raw = avg_dealer_ratio_across_unique_mep(rel_sel)
-    down_dealer = down_dealer_raw.copy()
-    if not down_dealer.empty:
-        down_dealer["平均配比"] = down_dealer["平均配比"].apply(pct_str)
+    down_dealer_tbl = down_dealer_raw.copy()
+    if not down_dealer_tbl.empty:
+        down_dealer_tbl["平均配比"] = down_dealer_tbl["平均配比"].apply(pct_str)
 
 elif role == "水電公司":
     df_sel = df[df["水電公司"] == target]
+    # 經銷商在該水電的配比 + 額度(萬)（配比×年用量）
+    rel_sel = rel[rel["水電公司"] == target]
+    mep_vol = df_sel["年使用量_萬"].dropna().unique()
+    vol_val = float(mep_vol[0]) if len(mep_vol) > 0 and not pd.isna(mep_vol[0]) else 0.0
+
+    dealer_ratio = (rel_sel.groupby("經銷商")["配比"].mean()
+                    .reset_index().sort_values("配比", ascending=False))
+    dealer_ratio["額度_萬"] = dealer_ratio["配比"].astype(float) * vol_val
+    down_dealer_raw = dealer_ratio.rename(columns={"配比":"配比"})  # 視覺用：我們會用 額度_萬
+    down_dealer_tbl = down_dealer_raw.copy()
+    if not down_dealer_tbl.empty:
+        down_dealer_tbl["配比"] = down_dealer_tbl["配比"].apply(pct_str)
+        down_dealer_tbl["額度_萬"] = down_dealer_tbl["額度_萬"].round(2)
+
+    # 上游：建設×營造（顯示在概覽）
     up_tbl = share_table(
         df_sel.assign(_公司=df_sel["建設公司"].fillna("")+" × "+df_sel["營造公司"].fillna("")),
         ["_公司"], "公司"
     )
-    down_mep = None
-    rel_sel = rel[rel["水電公司"] == target]
-    down_dealer_raw = (rel_sel.groupby("經銷商")["配比"].mean()
-                       .reset_index().sort_values("配比", ascending=False)
-                       .rename(columns={"配比":"配比"}))
-    down_dealer = down_dealer_raw.copy()
-    if not down_dealer.empty:
-        down_dealer["配比"] = down_dealer["配比"].apply(pct_str)
+    down_mep = None  # 水電視圖不需要列出其他水電
 
 elif role == "經銷商":
-    # 經銷商視圖：保留合作水電，並加上「採購比例」
+    # 經銷商視圖：合作水電（並加上此經銷在各水電的平均配比）
     df_sel = rel[rel["經銷商"] == target].merge(
         df, on=["建設公司","營造公司","水電公司"], how="left", suffixes=("","_df")
     )
     down_mep = share_table(df_sel, ["水電公司"], "水電公司")
-    # 加上該經銷商在各水電的平均配比
     r_df = (rel[rel["經銷商"] == target]
             .groupby("水電公司")["配比"].mean().reset_index()
-            .rename(columns={"配比":"採購比例"}))
+            .rename(columns={"配比":"該經銷商配比"}))
     if not r_df.empty:
-        r_df["採購比例"] = r_df["採購比例"].apply(pct_str)
+        r_df["該經銷商配比"] = r_df["該經銷商配比"].apply(pct_str)
         down_mep = down_mep.merge(r_df, on="水電公司", how="left")
-    # 上游表不需要
     up_tbl = None
 
 # ====================== KPI（橫排） ======================
@@ -301,10 +307,11 @@ with st.container():
     n_con = df_sel["營造公司"].nunique() if "營造公司" in df_sel.columns else 0
     n_mep = df_sel["水電公司"].nunique() if "水電公司" in df_sel.columns else 0
     if role in ["建設公司","營造公司","水電公司"]:
-        n_dealer = (rel_sel["經銷商"].nunique() if isinstance(rel_sel, pd.DataFrame) and "經銷商" in rel_sel.columns else 0)
+        n_dealer = (rel[rel[role]==target]["經銷商"].nunique()
+                    if role in ["建設公司","營造公司"]
+                    else (rel[rel["水電公司"]==target]["經銷商"].nunique()))
     else:
         n_dealer = df_sel["經銷商"].nunique() if "經銷商" in df_sel.columns else 0
-
     c1.metric("資料筆數", f"{cnt_rows:,}")
     c2.metric("建設家數", f"{n_dev:,}")
     c3.metric("營造家數", f"{n_con:,}")
@@ -312,150 +319,176 @@ with st.container():
     c5.metric("經銷家數", f"{n_dealer:,}")
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ====================== Tabs：概覽 / 合作對象 / 競爭者 / 區塊匯出 ======================
+# ====================== Tabs：概覽 / 合作對象 / 競爭者 / 匯出 ======================
 tab_overview, tab_partners, tab_comp, tab_export = st.tabs(["概覽", "合作對象", "競爭者", "匯出"])
 
 with tab_overview:
-    # --- 依角色客製快速總攬 ---
+    # 依角色的快速總攬
     if role == "建設公司":
         st.markdown("#### 🤝 合作對象")
-        st.write("・營造公司")
-        st.dataframe(up_tbl if up_tbl is not None and not up_tbl.empty else pd.DataFrame(), use_container_width=True)
-        st.write("・水電公司")
-        st.dataframe(down_mep if down_mep is not None and not down_mep.empty else pd.DataFrame(), use_container_width=True)
-        st.write("・終端經銷商")
-        st.dataframe(down_dealer if down_dealer is not None and not down_dealer.empty else pd.DataFrame(), use_container_width=True)
+        # 顯示時把「次數」改名「合作次數」
+        if up_tbl is not None and not up_tbl.empty:
+            st.write("・營造公司")
+            st.dataframe(up_tbl.rename(columns={"次數":"合作次數"}), use_container_width=True)
+        if down_mep is not None and not down_mep.empty:
+            st.write("・水電公司")
+            st.dataframe(down_mep.rename(columns={"次數":"合作次數"}), use_container_width=True)
+        if down_dealer_tbl is not None and not down_dealer_tbl.empty:
+            st.write("・終端經銷商")
+            st.dataframe(down_dealer_tbl, use_container_width=True)
 
     elif role == "經銷商":
         st.markdown("#### 🤝 合作水電")
-        st.dataframe(down_mep if down_mep is not None and not down_mep.empty else pd.DataFrame(), use_container_width=True)
+        st.dataframe(down_mep if down_mep is not None and not down_mep.empty else pd.DataFrame(),
+                     use_container_width=True)
 
-    else:
-        # 其他角色維持原本 v8 呈現（上游＋直接合作）
-        st.markdown("#### 📌 快速總覽")
+    elif role == "水電公司":
+        st.markdown("#### 🤝 合作對象")
+        # 經銷商（配比＋額度）＋ 年用量備註
+        if down_dealer_tbl is not None and not down_dealer_tbl.empty:
+            st.write("・經銷商（配比與額度）")
+            st.dataframe(down_dealer_tbl.rename(columns={"額度_萬":"額度(萬)"}),
+                         use_container_width=True)
+        mep_vol = df_sel["年使用量_萬"].dropna().unique()
+        memo = f"{mep_vol[0]} 萬" if len(mep_vol)>0 else "—"
+        st.info(f"📌 預估年使用量：{memo}（已用於圖表的金額換算）")
+
+    else:  # 營造公司維持原本呈現
+        st.markdown("#### 📌 快速總攬")
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**上游**")
-            st.dataframe(up_tbl if up_tbl is not None and not up_tbl.empty else pd.DataFrame(), use_container_width=True)
+            st.dataframe(up_tbl if up_tbl is not None and not up_tbl.empty else pd.DataFrame(),
+                         use_container_width=True)
         with c2:
             st.markdown("**直接合作對象**")
-            if role in ["營造公司"]:
-                st.write("・水電公司")
-                st.dataframe(down_mep if down_mep is not None and not down_mep.empty else pd.DataFrame(), use_container_width=True)
-                st.write("・終端經銷商（平均配比｜按水電等權）")
-                st.dataframe(down_dealer if down_dealer is not None and not down_dealer.empty else pd.DataFrame(), use_container_width=True)
-            elif role == "水電公司":
-                st.write("・經銷商（平均配比）")
-                st.dataframe(down_dealer if down_dealer is not None and not down_dealer.empty else pd.DataFrame(), use_container_width=True)
-                mep_vol = df[df["水電公司"] == target]["年使用量_萬"].dropna().unique()
-                memo = f"{mep_vol[0]} 萬" if len(mep_vol)>0 else "—"
-                st.info(f"📌 預估年使用量（僅備註，不參與計算）：{memo}")
+            st.write("・水電公司")
+            st.dataframe(down_mep if down_mep is not None and not down_mep.empty else pd.DataFrame(),
+                         use_container_width=True)
+            st.write("・終端經銷商（平均配比｜按水電等權）")
+            st.dataframe(down_dealer_tbl if down_dealer_tbl is not None and not down_dealer_tbl.empty else pd.DataFrame(),
+                         use_container_width=True)
 
 with tab_partners:
     st.markdown("#### 📈 視覺化")
+    # 建設/營造：水電出現次數；建設/營造：經銷商平均配比；水電：經銷商金額；經銷商：水電出現次數
     if role in ["建設公司","營造公司"] and down_mep is not None and not down_mep.empty:
-        draw_chart(down_mep, down_mep.columns[0], "次數", f"{role} → 水電公司 出現次數")
+        draw_chart(down_mep, down_mep.columns[0], "次數", f"{role} → 水電公司 合作次數")
     if role == "水電公司" and down_dealer_raw is not None and not down_dealer_raw.empty:
-        draw_chart(down_dealer_raw, "經銷商", "配比", "水電公司 → 經銷商 配比")
+        # 改用金額
+        draw_chart(down_dealer_raw.rename(columns={"額度_萬":"金額(萬)"}), "經銷商", "金額(萬)", "水電公司 → 終端經銷商 金額(萬)")
     if role == "營造公司" and down_dealer_raw is not None and not down_dealer_raw.empty:
-        draw_chart(down_dealer_raw, "經銷商", "平均配比", "營造公司 → 經銷商 平均配比（按水電等權）")
+        draw_chart(down_dealer_raw, "經銷商", "平均配比", "營造公司 → 終端經銷商 平均配比（按水電等權）")
     if role == "建設公司" and down_dealer_raw is not None and not down_dealer_raw.empty:
-        draw_chart(down_dealer_raw, "經銷商", "平均配比", "建設公司 → 經銷商 平均配比（按水電等權）")
+        draw_chart(down_dealer_raw, "經銷商", "平均配比", "建設公司 → 終端經銷商 平均配比（按水電等權）")
     if role == "經銷商" and down_mep is not None and not down_mep.empty:
-        draw_chart(down_mep, "水電公司", "次數", "經銷商 → 水電公司 出現次數")
+        draw_chart(down_mep, "水電公司", "次數", "經銷商 → 水電公司 合作次數")
 
 with tab_comp:
     st.markdown("#### ⚔️ 競爭者")
-    def competitor_table_water(df_base, target_mep):
-        g = df_base[df_base["水電公司"].notna()]
-        cons = g[g["水電公司"] == target_mep]["營造公司"].dropna().unique().tolist()
-        if not cons:
-            return pd.DataFrame(columns=["競爭對手","共同出現次數"])
-        cand = g[g["營造公司"].isin(cons)]
-        co = cand[cand["水電公司"] != target_mep].groupby("水電公司").size().reset_index(name="共同出現次數")
-        return co.sort_values("共同出現次數", ascending=False)
+    # 建設公司：不提供競爭者分析
+    if role == "建設公司":
+        st.info("此角色不提供競爭者分析。")
+    else:
+        # === 競爭者函式 ===
+        def competitor_table_water(df_base, target_mep):
+            g = df_base[df_base["水電公司"].notna()]
+            cons = g[g["水電公司"] == target_mep]["營造公司"].dropna().unique().tolist()
+            if not cons:
+                return pd.DataFrame(columns=["競爭對手","共同出現次數"])
+            cand = g[g["營造公司"].isin(cons)]
+            co = cand[cand["水電公司"] != target_mep].groupby("水電公司").size().reset_index(name="共同出現次數")
+            return co.sort_values("共同出現次數", ascending=False)
 
-    def competitor_table_dealer(rel_base, target_dealer):
-        target_clients = rel_base[rel_base["經銷商"] == target_dealer]["水電公司"].dropna().unique().tolist()
-        target_client_set = set(target_clients)
-        target_total_clients = len(target_client_set)
-
-        tgt_ratio_map = (rel_base[rel_base["經銷商"] == target_dealer]
-                         .groupby("水電公司")["配比"].mean().to_dict())
-
-        target_total_market = 0.0
-        for mep in target_client_set:
-            vol = float(mep_vol_map.get(mep, 0.0) or 0.0)
-            r_t = float(tgt_ratio_map.get(mep, 0.0) or 0.0)
-            target_total_market += vol * r_t
-
-        stats = {}
-        for mep, grp in rel_base.groupby("水電公司"):
-            if mep not in target_client_set:
-                continue
-            vol = float(mep_vol_map.get(mep, 0.0) or 0.0)
-            ratios = grp.groupby("經銷商")["配比"].mean().to_dict()
-            if target_dealer not in ratios:
-                continue
-            r_t = float(ratios[target_dealer] or 0.0)
-            for dealer, r_c in ratios.items():
-                if dealer == target_dealer or pd.isna(dealer):
+        def competitor_table_dealer(rel_base, target_dealer):
+            target_clients = rel_base[rel_base["經銷商"] == target_dealer]["水電公司"].dropna().unique().tolist()
+            target_client_set = set(target_clients)
+            target_total_clients = len(target_client_set)
+            tgt_ratio_map = (rel_base[rel_base["經銷商"] == target_dealer]
+                             .groupby("水電公司")["配比"].mean().to_dict())
+            target_total_market = 0.0
+            for mep in target_client_set:
+                vol = float(mep_vol_map.get(mep, 0.0) or 0.0)
+                r_t = float(tgt_ratio_map.get(mep, 0.0) or 0.0)
+                target_total_market += vol * r_t
+            stats = {}
+            for mep, grp in rel_base.groupby("水電公司"):
+                if mep not in target_client_set:
                     continue
-                d = stats.setdefault(dealer, {
-                    "共同客戶數":0,
-                    "overlap_ratio_sum":0.0,
-                    "共同市場額度":0.0,
-                    "重疊市場額度":0.0
+                vol = float(mep_vol_map.get(mep, 0.0) or 0.0)
+                ratios = grp.groupby("經銷商")["配比"].mean().to_dict()
+                if target_dealer not in ratios:
+                    continue
+                r_t = float(ratios[target_dealer] or 0.0)
+                for dealer, r_c in ratios.items():
+                    if dealer == target_dealer or pd.isna(dealer):
+                        continue
+                    d = stats.setdefault(dealer, {"共同客戶數":0,"overlap_ratio_sum":0.0,"共同市場額度":0.0,"重疊市場額度":0.0})
+                    d["共同客戶數"] += 1
+                    r_min = min(float(r_c or 0.0), r_t)
+                    d["overlap_ratio_sum"] += r_min
+                    d["共同市場額度"] += vol
+                    d["重疊市場額度"] += vol * r_min
+            rows = []
+            for dealer, d in stats.items():
+                shared = d["共同客戶數"]
+                if shared <= 0:
+                    continue
+                comp_index = d["overlap_ratio_sum"] / shared
+                shared_pct = (shared / target_total_clients) if target_total_clients > 0 else 0.0
+                overlap_market_share = (d["重疊市場額度"] / target_total_market) if target_total_market > 0 else 0.0
+                threat = "高" if overlap_market_share > 0.30 else ("中" if overlap_market_share >= 0.15 else "低")
+                rows.append({
+                    "競爭對手": dealer,
+                    "共同客戶數": shared,
+                    "共同客戶數占比": pct_str(shared_pct),
+                    "競爭指數": pct_str(comp_index),
+                    "共同市場額度(萬)": round(d["共同市場額度"], 2),
+                    "重疊市場額度(萬)": round(d["重疊市場額度"], 2),
+                    "重疊市場占比": pct_str(overlap_market_share),
+                    "威脅程度": threat,
                 })
-                d["共同客戶數"] += 1
-                r_min = min(float(r_c or 0.0), r_t)
-                d["overlap_ratio_sum"] += r_min
-                d["共同市場額度"] += vol
-                d["重疊市場額度"] += vol * r_min
-
-        rows = []
-        for dealer, d in stats.items():
-            shared = d["共同客戶數"]
-            if shared <= 0:
-                continue
-            comp_index = d["overlap_ratio_sum"] / shared
-            shared_pct = (shared / target_total_clients) if target_total_clients > 0 else 0.0
-            overlap_market_share = (d["重疊市場額度"] / target_total_market) if target_total_market > 0 else 0.0
-            threat = "高" if overlap_market_share > 0.30 else ("中" if overlap_market_share >= 0.15 else "低")
-            rows.append({
-                "競爭對手": dealer,
-                "共同客戶數": shared,
-                "共同客戶數占比": pct_str(shared_pct),
-                "競爭指數": pct_str(comp_index),
-                "共同市場額度(萬)": round(d["共同市場額度"], 2),
-                "重疊市場額度(萬)": round(d["重疊市場額度"], 2),
-                "重疊市場占比": pct_str(overlap_market_share),
-                "威脅程度": threat,
-            })
-
-        out = pd.DataFrame(rows)
-        if out.empty:
+            out = pd.DataFrame(rows)
+            if out.empty:
+                return out
+            cat = pd.Categorical(out["威脅程度"], categories=["高","中","低"], ordered=True)
+            out = out.assign(_order=cat).sort_values(["_order","重疊市場占比","共同客戶數"], ascending=[True, False, False]).drop(columns="_order")
             return out
-        cat = pd.Categorical(out["威脅程度"], categories=["高","中","低"], ordered=True)
-        out = out.assign(_order=cat).sort_values(["_order","重疊市場占比","共同客戶數"], ascending=[True, False, False]).drop(columns="_order")
-        return out
 
-    if role == "水電公司":
-        st.dataframe(competitor_table_water(df, target), use_container_width=True)
-    elif role == "經銷商":
-        st.dataframe(competitor_table_dealer(rel, target), use_container_width=True)
-    elif role == "建設公司":
-        cons = df[df["建設公司"] == target]["營造公司"].dropna().unique().tolist()
-        cand = df[df["營造公司"].isin(cons)]
-        co = (cand[cand["建設公司"] != target].groupby("建設公司")
-              .size().reset_index(name="共同出現次數").sort_values("共同出現次數", ascending=False))
-        st.dataframe(co, use_container_width=True)
-    elif role == "營造公司":
-        devs = df[df["營造公司"] == target]["建設公司"].dropna().unique().tolist()
-        cand = df[df["建設公司"].isin(devs)]
-        co = (cand[cand["營造公司"] != target].groupby("營造公司")
-              .size().reset_index(name="共同出現次數").sort_values("共同出現次數", ascending=False))
-        st.dataframe(co, use_container_width=True)
+        def union_overlap_share(rel_base, target_dealer):
+            """去重後的整體被競爭覆蓋率（≤100%）"""
+            target_clients = rel_base[rel_base["經銷商"] == target_dealer]["水電公司"].dropna().unique().tolist()
+            tgt_ratio_map = (rel_base[rel_base["經銷商"] == target_dealer]
+                             .groupby("水電公司")["配比"].mean().to_dict())
+            total_target = 0.0
+            union_overlap = 0.0
+            for mep in target_clients:
+                vol = float(mep_vol_map.get(mep, 0.0) or 0.0)
+                r_t = float(tgt_ratio_map.get(mep, 0.0) or 0.0)
+                comp_sum = float((rel_base[rel_base["水電公司"]==mep]
+                                  .groupby("經銷商")["配比"].mean()
+                                  .drop(labels=[target_dealer], errors="ignore")
+                                  .sum()) or 0.0)
+                union_overlap += vol * min(r_t, comp_sum)
+                total_target  += vol * r_t
+            return (union_overlap / total_target) if total_target > 0 else 0.0
+
+        # === 顯示 ===
+        if role == "水電公司":
+            st.dataframe(competitor_table_water(df, target), use_container_width=True)
+        elif role == "經銷商":
+            comp_tbl = competitor_table_dealer(rel, target)
+            st.dataframe(comp_tbl, use_container_width=True)
+            # 去重後的整體覆蓋率
+            union_share = union_overlap_share(rel, target)
+            st.caption(f"📌 去重後的『整體被競爭覆蓋率』：{pct_str(union_share)}")
+            st.info("註：表格中的『重疊市場占比』為與單一對手的配對式重疊，對手多家相加可能 > 100%；上述去重指標則不會超過 100%。")
+        elif role == "營造公司":
+            devs = df[df["營造公司"] == target]["建設公司"].dropna().unique().tolist()
+            cand = df[df["建設公司"].isin(devs)]
+            co = (cand[cand["營造公司"] != target].groupby("營造公司")
+                  .size().reset_index(name="共同出現次數").sort_values("共同出現次數", ascending=False))
+            st.dataframe(co, use_container_width=True)
 
 with tab_export:
     st.markdown("#### ⬇️ 匯出關係明細（經銷配比展開，不含年用量加權）")
@@ -467,7 +500,7 @@ with tab_export:
     st.download_button(
         "下載 Excel",
         data=output.getvalue(),
-        file_name="relations_search_dashboard_v9.xlsx",
+        file_name="relations_search_dashboard_v10.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
