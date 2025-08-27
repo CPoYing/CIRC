@@ -1,8 +1,9 @@
-# app.py － 百大建商｜關係鏈分析（單頁搜尋 v10）
-# 更新要點：
-# - 建設公司：移除競爭者功能；概覽「次數」欄名改「合作次數」；經銷商區塊改名「終端經銷商」
-# - 水電公司：合作對象顯示預估年使用量；圖表以金額(配比×年用量)作為圓餅值
-# - 經銷商：競爭者區塊新增「去重後整體被競爭覆蓋率」(Union overlap≤100%)
+# app.py － 百大建商｜關係鏈分析（單頁搜尋 v11）
+# 變更：
+# - 建設公司：移除競爭者功能；概覽的「次數」→「合作次數」；經銷商區塊名稱為「終端經銷商」
+# - 水電公司：合作對象顯示年用量，圖表改用 金額(=配比×年用量) 當圓餅值
+# - 經銷商：競爭者頁面新增大型指標「競爭覆蓋率（去重）」與「總市場額度(萬)」
+# - 全站移除 icon/emoji
 
 import io
 import re
@@ -18,21 +19,25 @@ import streamlit as st
 import plotly.express as px
 
 # ====================== 基本設定與樣式 ======================
-st.set_page_config(page_title="百大建商｜關係鏈分析（單頁搜尋 v10）", page_icon="🏗️", layout="wide")
-st.title("🏗️ 百大建商｜關係鏈分析（單頁搜尋 v10）")
+st.set_page_config(page_title="百大建商｜關係鏈分析（單頁搜尋 v11）", layout="wide")
+st.title("百大建商｜關係鏈分析（單頁搜尋 v11）")
 try:
     p = Path(__file__)
-    st.caption(
-        f"🔖 版本：v10 | 檔案：{p.name} | 修改時間：{datetime.fromtimestamp(p.stat().st_mtime):%Y-%m-%d %H:%M:%S}"
-    )
+    st.caption(f"版本：v11 | 檔案：{p.name} | 修改時間：{datetime.fromtimestamp(p.stat().st_mtime):%Y-%m-%d %H:%M:%S}")
 except Exception:
-    st.caption("🔖 版本：v10")
+    st.caption("版本：v11")
 
+# CSS
 st.markdown(
     """
     <style>
     .chip {display:inline-block; padding:4px 10px; border-radius:999px; background:#F1F5F9; border:1px solid #E2E8F0; font-size:12px; margin-right:8px;}
-    .card {padding:16px 16px; border-radius:16px; border:1px solid #E2E8F0; background:#FFFFFF; box-shadow:0 1px 2px rgba(0,0,0,0.04); margin-bottom:12px;}
+    .card {padding:16px; border-radius:16px; border:1px solid #E2E8F0; background:#FFFFFF; box-shadow:0 1px 2px rgba(0,0,0,0.04); margin-bottom:12px;}
+    .metric-row {display:flex; gap:16px; flex-wrap:wrap; margin-bottom:8px;}
+    .metric-big {flex:1; min-width:260px; padding:16px; border-radius:14px; background:#EEF2FF; border:1px solid #C7D2FE;}
+    .metric-big .label {font-size:14px; color:#374151; margin-bottom:6px;}
+    .metric-big .value {font-size:32px; font-weight:800; color:#111827;}
+    .metric-big.gray {background:#F8FAFC; border-color:#E5E7EB;}
     .stTabs [data-baseweb="tab-list"] { gap: 6px; }
     .stTabs [data-baseweb="tab"] { border: 1px solid #e5e7eb; padding: 6px 12px; border-radius: 10px; background: #fafafa; }
     .stTabs [aria-selected="true"] { background: #eef2ff !important; border-color:#c7d2fe !important; }
@@ -86,6 +91,11 @@ def pct_str(x):
     d = Decimal(str(v)).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP)
     return f"{d}%"
 
+def fmt_amount(x):
+    if x is None or pd.isna(x):
+        return "-"
+    return f"{float(x):,.2f}"
+
 def get_col_by_pos_or_name(df, pos, name_candidates):
     cols = df.columns.tolist()
     try:
@@ -116,6 +126,25 @@ def avg_dealer_ratio_across_unique_mep(rel_subset: pd.DataFrame) -> pd.DataFrame
     rows = [(dealer, s / n) for dealer, s in sums.items()]
     out = pd.DataFrame(rows, columns=["經銷商","平均配比"]).sort_values("平均配比", ascending=False)
     return out
+
+# 去重後覆蓋率 + 總市場額度（for 經銷商）
+def union_overlap_share_and_total(rel_base, target_dealer, mep_vol_map):
+    target_clients = rel_base[rel_base["經銷商"] == target_dealer]["水電公司"].dropna().unique().tolist()
+    tgt_ratio_map = (rel_base[rel_base["經銷商"] == target_dealer]
+                     .groupby("水電公司")["配比"].mean().to_dict())
+    total_target = 0.0
+    union_overlap = 0.0
+    for mep in target_clients:
+        vol = float(mep_vol_map.get(mep, 0.0) or 0.0)
+        r_t = float(tgt_ratio_map.get(mep, 0.0) or 0.0)
+        comp_sum = float((rel_base[rel_base["水電公司"]==mep]
+                          .groupby("經銷商")["配比"].mean()
+                          .drop(labels=[target_dealer], errors="ignore")
+                          .sum()) or 0.0)
+        union_overlap += vol * min(r_t, comp_sum)
+        total_target  += vol * r_t
+    share = (union_overlap / total_target) if total_target > 0 else 0.0
+    return share, total_target
 
 # ====================== 上傳 ======================
 file = st.file_uploader(
@@ -237,14 +266,14 @@ def draw_chart(df_plot, name_col, value_col, title):
 
 # ====================== 資料切片 ======================
 down_dealer_raw = None   # 視覺用數值（建設/營造：平均配比；水電：額度_萬）
-down_dealer_tbl = None   # 表格用（％字串或含額度）
-down_mep = None          # 水電公司列表（含次數/占比；經銷商視圖會加配比）
-up_tbl = None            # 上游或合作營造列表
+down_dealer_tbl = None   # 表格用
+down_mep = None
+up_tbl = None
 
 if role == "建設公司":
     df_sel = df[df["建設公司"] == target]
-    up_tbl = share_table(df_sel, ["營造公司"], "營造公司")      # for 概覽：營造公司
-    down_mep = share_table(df_sel, ["水電公司"], "水電公司")     # for 概覽：水電公司
+    up_tbl = share_table(df_sel, ["營造公司"], "營造公司")
+    down_mep = share_table(df_sel, ["水電公司"], "水電公司")
     rel_sel = rel[rel["建設公司"] == target]
     down_dealer_raw = avg_dealer_ratio_across_unique_mep(rel_sel)
     down_dealer_tbl = down_dealer_raw.copy()
@@ -263,7 +292,6 @@ elif role == "營造公司":
 
 elif role == "水電公司":
     df_sel = df[df["水電公司"] == target]
-    # 經銷商在該水電的配比 + 額度(萬)（配比×年用量）
     rel_sel = rel[rel["水電公司"] == target]
     mep_vol = df_sel["年使用量_萬"].dropna().unique()
     vol_val = float(mep_vol[0]) if len(mep_vol) > 0 and not pd.isna(mep_vol[0]) else 0.0
@@ -271,21 +299,19 @@ elif role == "水電公司":
     dealer_ratio = (rel_sel.groupby("經銷商")["配比"].mean()
                     .reset_index().sort_values("配比", ascending=False))
     dealer_ratio["額度_萬"] = dealer_ratio["配比"].astype(float) * vol_val
-    down_dealer_raw = dealer_ratio.rename(columns={"配比":"配比"})  # 視覺用：我們會用 額度_萬
+    down_dealer_raw = dealer_ratio.rename(columns={"配比":"配比"})
     down_dealer_tbl = down_dealer_raw.copy()
     if not down_dealer_tbl.empty:
         down_dealer_tbl["配比"] = down_dealer_tbl["配比"].apply(pct_str)
         down_dealer_tbl["額度_萬"] = down_dealer_tbl["額度_萬"].round(2)
 
-    # 上游：建設×營造（顯示在概覽）
     up_tbl = share_table(
         df_sel.assign(_公司=df_sel["建設公司"].fillna("")+" × "+df_sel["營造公司"].fillna("")),
         ["_公司"], "公司"
     )
-    down_mep = None  # 水電視圖不需要列出其他水電
+    down_mep = None
 
 elif role == "經銷商":
-    # 經銷商視圖：合作水電（並加上此經銷在各水電的平均配比）
     df_sel = rel[rel["經銷商"] == target].merge(
         df, on=["建設公司","營造公司","水電公司"], how="left", suffixes=("","_df")
     )
@@ -312,6 +338,7 @@ with st.container():
                     else (rel[rel["水電公司"]==target]["經銷商"].nunique()))
     else:
         n_dealer = df_sel["經銷商"].nunique() if "經銷商" in df_sel.columns else 0
+
     c1.metric("資料筆數", f"{cnt_rows:,}")
     c2.metric("建設家數", f"{n_dev:,}")
     c3.metric("營造家數", f"{n_con:,}")
@@ -323,10 +350,8 @@ with st.container():
 tab_overview, tab_partners, tab_comp, tab_export = st.tabs(["概覽", "合作對象", "競爭者", "匯出"])
 
 with tab_overview:
-    # 依角色的快速總攬
     if role == "建設公司":
-        st.markdown("#### 🤝 合作對象")
-        # 顯示時把「次數」改名「合作次數」
+        st.markdown("#### 合作對象")
         if up_tbl is not None and not up_tbl.empty:
             st.write("・營造公司")
             st.dataframe(up_tbl.rename(columns={"次數":"合作次數"}), use_container_width=True)
@@ -338,30 +363,29 @@ with tab_overview:
             st.dataframe(down_dealer_tbl, use_container_width=True)
 
     elif role == "經銷商":
-        st.markdown("#### 🤝 合作水電")
+        st.markdown("#### 合作水電")
         st.dataframe(down_mep if down_mep is not None and not down_mep.empty else pd.DataFrame(),
                      use_container_width=True)
 
     elif role == "水電公司":
-        st.markdown("#### 🤝 合作對象")
-        # 經銷商（配比＋額度）＋ 年用量備註
+        st.markdown("#### 合作對象")
         if down_dealer_tbl is not None and not down_dealer_tbl.empty:
             st.write("・經銷商（配比與額度）")
             st.dataframe(down_dealer_tbl.rename(columns={"額度_萬":"額度(萬)"}),
                          use_container_width=True)
         mep_vol = df_sel["年使用量_萬"].dropna().unique()
         memo = f"{mep_vol[0]} 萬" if len(mep_vol)>0 else "—"
-        st.info(f"📌 預估年使用量：{memo}（已用於圖表的金額換算）")
+        st.info(f"預估年使用量：{memo}（已用於圖表的金額換算）")
 
-    else:  # 營造公司維持原本呈現
-        st.markdown("#### 📌 快速總攬")
+    else:  # 營造公司
+        st.markdown("#### 快速總覽")
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("**上游**")
+            st.markdown("上游")
             st.dataframe(up_tbl if up_tbl is not None and not up_tbl.empty else pd.DataFrame(),
                          use_container_width=True)
         with c2:
-            st.markdown("**直接合作對象**")
+            st.markdown("直接合作對象")
             st.write("・水電公司")
             st.dataframe(down_mep if down_mep is not None and not down_mep.empty else pd.DataFrame(),
                          use_container_width=True)
@@ -370,12 +394,10 @@ with tab_overview:
                          use_container_width=True)
 
 with tab_partners:
-    st.markdown("#### 📈 視覺化")
-    # 建設/營造：水電出現次數；建設/營造：經銷商平均配比；水電：經銷商金額；經銷商：水電出現次數
+    st.markdown("#### 視覺化")
     if role in ["建設公司","營造公司"] and down_mep is not None and not down_mep.empty:
         draw_chart(down_mep, down_mep.columns[0], "次數", f"{role} → 水電公司 合作次數")
     if role == "水電公司" and down_dealer_raw is not None and not down_dealer_raw.empty:
-        # 改用金額
         draw_chart(down_dealer_raw.rename(columns={"額度_萬":"金額(萬)"}), "經銷商", "金額(萬)", "水電公司 → 終端經銷商 金額(萬)")
     if role == "營造公司" and down_dealer_raw is not None and not down_dealer_raw.empty:
         draw_chart(down_dealer_raw, "經銷商", "平均配比", "營造公司 → 終端經銷商 平均配比（按水電等權）")
@@ -385,12 +407,11 @@ with tab_partners:
         draw_chart(down_mep, "水電公司", "次數", "經銷商 → 水電公司 合作次數")
 
 with tab_comp:
-    st.markdown("#### ⚔️ 競爭者")
-    # 建設公司：不提供競爭者分析
+    st.markdown("#### 競爭者")
     if role == "建設公司":
         st.info("此角色不提供競爭者分析。")
     else:
-        # === 競爭者函式 ===
+        # —— 競爭者計算函式 ——
         def competitor_table_water(df_base, target_mep):
             g = df_base[df_base["水電公司"].notna()]
             cons = g[g["水電公司"] == target_mep]["營造公司"].dropna().unique().tolist()
@@ -453,36 +474,29 @@ with tab_comp:
                 return out
             cat = pd.Categorical(out["威脅程度"], categories=["高","中","低"], ordered=True)
             out = out.assign(_order=cat).sort_values(["_order","重疊市場占比","共同客戶數"], ascending=[True, False, False]).drop(columns="_order")
-            return out
+            return out, target_total_market
 
-        def union_overlap_share(rel_base, target_dealer):
-            """去重後的整體被競爭覆蓋率（≤100%）"""
-            target_clients = rel_base[rel_base["經銷商"] == target_dealer]["水電公司"].dropna().unique().tolist()
-            tgt_ratio_map = (rel_base[rel_base["經銷商"] == target_dealer]
-                             .groupby("水電公司")["配比"].mean().to_dict())
-            total_target = 0.0
-            union_overlap = 0.0
-            for mep in target_clients:
-                vol = float(mep_vol_map.get(mep, 0.0) or 0.0)
-                r_t = float(tgt_ratio_map.get(mep, 0.0) or 0.0)
-                comp_sum = float((rel_base[rel_base["水電公司"]==mep]
-                                  .groupby("經銷商")["配比"].mean()
-                                  .drop(labels=[target_dealer], errors="ignore")
-                                  .sum()) or 0.0)
-                union_overlap += vol * min(r_t, comp_sum)
-                total_target  += vol * r_t
-            return (union_overlap / total_target) if total_target > 0 else 0.0
-
-        # === 顯示 ===
+        # —— 顯示 ——
         if role == "水電公司":
             st.dataframe(competitor_table_water(df, target), use_container_width=True)
         elif role == "經銷商":
-            comp_tbl = competitor_table_dealer(rel, target)
+            comp_tbl, target_total_market = competitor_table_dealer(rel, target)
+            # 大型重點指標：競爭覆蓋率（去重）＋ 總市場額度(萬)
+            union_share, total_target = union_overlap_share_and_total(rel, target, mep_vol_map)
+            st.markdown('<div class="metric-row">', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="metric-big"><div class="label">競爭覆蓋率（去重）</div>'
+                f'<div class="value">{pct_str(union_share)}</div></div>', unsafe_allow_html=True
+            )
+            st.markdown(
+                f'<div class="metric-big gray"><div class="label">總市場額度(萬)</div>'
+                f'<div class="value">{fmt_amount(total_target)}</div></div>', unsafe_allow_html=True
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+
             st.dataframe(comp_tbl, use_container_width=True)
-            # 去重後的整體覆蓋率
-            union_share = union_overlap_share(rel, target)
-            st.caption(f"📌 去重後的『整體被競爭覆蓋率』：{pct_str(union_share)}")
-            st.info("註：表格中的『重疊市場占比』為與單一對手的配對式重疊，對手多家相加可能 > 100%；上述去重指標則不會超過 100%。")
+            st.caption("說明：表格中的「重疊市場占比」為與單一對手的配對式重疊（加總可能 >100%）；上方的「競爭覆蓋率（去重）」為所有對手合併後的覆蓋比例（不會超過 100%）。")
+
         elif role == "營造公司":
             devs = df[df["營造公司"] == target]["建設公司"].dropna().unique().tolist()
             cand = df[df["建設公司"].isin(devs)]
@@ -491,7 +505,7 @@ with tab_comp:
             st.dataframe(co, use_container_width=True)
 
 with tab_export:
-    st.markdown("#### ⬇️ 匯出關係明細（經銷配比展開，不含年用量加權）")
+    st.markdown("#### 匯出關係明細（經銷配比展開，不含年用量加權）")
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_raw.to_excel(writer, index=False, sheet_name="原始資料")
@@ -500,12 +514,12 @@ with tab_export:
     st.download_button(
         "下載 Excel",
         data=output.getvalue(),
-        file_name="relations_search_dashboard_v10.xlsx",
+        file_name="relations_search_dashboard_v11.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 # 清除快取
-with st.expander("🧹 清除快取"):
+with st.expander("清除快取"):
     if st.button("清除 @st.cache_data 並重載"):
         st.cache_data.clear()
         st.rerun()
