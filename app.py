@@ -1,9 +1,9 @@
-# app.py － 百大建商｜關係鏈分析（單頁搜尋 v11）
-# 變更：
-# - 建設公司：移除競爭者功能；概覽的「次數」→「合作次數」；經銷商區塊名稱為「終端經銷商」
-# - 水電公司：合作對象顯示年用量，圖表改用 金額(=配比×年用量) 當圓餅值
-# - 經銷商：競爭者頁面新增大型指標「競爭覆蓋率（去重）」與「總市場額度(萬)」
-# - 全站移除 icon/emoji
+# app.py － 百大建商｜關係鏈分析（單頁搜尋 v12）
+# 變更重點：
+# - 新增 N~S 欄位解析：N/P/R=品牌名稱，O/Q/S=品牌占比
+# - 「水電公司」視角新增：線纜品牌（配比與額度），額度=配比×該水電年使用量(萬)
+# - 品牌也加入「視覺化」的圓餅圖（金額），及「匯出」工作表
+# - 其他沿用 v11：建設公司無競爭者、建設公司概覽把「次數」→「合作次數」、全站無 icon
 
 import io
 import re
@@ -19,13 +19,13 @@ import streamlit as st
 import plotly.express as px
 
 # ====================== 基本設定與樣式 ======================
-st.set_page_config(page_title="百大建商｜關係鏈分析（單頁搜尋 v11）", layout="wide")
-st.title("百大建商｜關係鏈分析（單頁搜尋 v11）")
+st.set_page_config(page_title="百大建商｜關係鏈分析（單頁搜尋 v12）", layout="wide")
+st.title("百大建商｜關係鏈分析（單頁搜尋 v12）")
 try:
     p = Path(__file__)
-    st.caption(f"版本：v11 | 檔案：{p.name} | 修改時間：{datetime.fromtimestamp(p.stat().st_mtime):%Y-%m-%d %H:%M:%S}")
+    st.caption(f"版本：v12 | 檔案：{p.name} | 修改時間：{datetime.fromtimestamp(p.stat().st_mtime):%Y-%m-%d %H:%M:%S}")
 except Exception:
-    st.caption("版本：v11")
+    st.caption("版本：v12")
 
 # CSS
 st.markdown(
@@ -148,7 +148,7 @@ def union_overlap_share_and_total(rel_base, target_dealer, mep_vol_map):
 
 # ====================== 上傳 ======================
 file = st.file_uploader(
-    "上傳 Excel 或 CSV 檔（固定欄位：D=建設、E=營造、F=水電、G=年用量、H/J/L=經銷、I/K/M=配比）",
+    "上傳 Excel 或 CSV 檔（固定欄位：D=建設、E=營造、F=水電、G=年用量、H/J/L=經銷、I/K/M=配比、N/P/R=品牌、O/Q/S=品牌占比）",
     type=["xlsx", "xls", "csv"],
     help="Excel 需使用 openpyxl 解析",
 )
@@ -158,7 +158,8 @@ if not file:
 
 df_raw = read_any(file)
 
-# 欄位定位（0-based）：D=3 E=4 F=5 G=6 H=7 I=8 J=9 K=10 L=11 M=12
+# 欄位定位（0-based）
+# 主要：D=3 E=4 F=5 G=6 H=7 I=8 J=9 K=10 L=11 M=12
 col_dev = get_col_by_pos_or_name(df_raw, 3, ["建商","建設公司","建設公司(業主)"])
 col_con = get_col_by_pos_or_name(df_raw, 4, ["營造公司","營造商"])
 col_mep = get_col_by_pos_or_name(df_raw, 5, ["水電全名","水電公司","機電公司","機電廠商"])
@@ -170,28 +171,45 @@ col_rB = get_col_by_pos_or_name(df_raw, 10, ["經銷B佔比(%)","經銷商B配�
 col_dC = get_col_by_pos_or_name(df_raw, 11, ["經銷商C","經銷Ｃ","經銷商3"])
 col_rC = get_col_by_pos_or_name(df_raw, 12, ["經銷Ｃ佔比(%)","經銷C佔比(%)","經銷商C配比","C配比"])
 
+# 新增：N=13 O=14 P=15 Q=16 R=17 S=18（品牌名稱＋品牌占比）
+col_bA = get_col_by_pos_or_name(df_raw, 13, ["品牌A","線纜品牌A","線纜品牌1","品牌1"])
+col_rbA = get_col_by_pos_or_name(df_raw, 14, ["品牌A佔比(%)","品牌A配比","品牌1佔比","A品牌佔比","A品牌配比"])
+col_bB = get_col_by_pos_or_name(df_raw, 15, ["品牌B","線纜品牌B","線纜品牌2","品牌2"])
+col_rbB = get_col_by_pos_or_name(df_raw, 16, ["品牌B佔比(%)","品牌B配比","品牌2佔比","B品牌佔比","B品牌配比"])
+col_bC = get_col_by_pos_or_name(df_raw, 17, ["品牌C","線纜品牌C","線纜品牌3","品牌3"])
+col_rbC = get_col_by_pos_or_name(df_raw, 18, ["品牌C佔比(%)","品牌C配比","品牌3佔比","C品牌佔比","C品牌配比"])
+
 required = [col_dev, col_con, col_mep]
 if any(c is None for c in required):
     st.error("找不到必要欄位（依欄位位置 D/E/F 取得失敗）。請確認資料欄序。")
     st.stop()
 
 # ====================== 轉換（不以G加權；% 兩位小數） ======================
-df = df_raw.rename(columns={
+rename_map = {
     col_dev:"建設公司", col_con:"營造公司", col_mep:"水電公司",
     (col_vol or "G"): "年使用量_萬",
     col_dA:"經銷商A", col_rA:"經銷A比",
     col_dB:"經銷商B", col_rB:"經銷B比",
     col_dC:"經銷商C", col_rC:"經銷C比",
-}).copy()
+}
+# 品牌欄若有才納入 rename
+if col_bA:  rename_map[col_bA]  = "品牌A"
+if col_rbA: rename_map[col_rbA] = "品牌A比"
+if col_bB:  rename_map[col_bB]  = "品牌B"
+if col_rbB: rename_map[col_rbB] = "品牌B比"
+if col_bC:  rename_map[col_bC]  = "品牌C"
+if col_rbC: rename_map[col_rbC] = "品牌C比"
 
-for c in ["建設公司","營造公司","水電公司","經銷商A","經銷商B","經銷商C"]:
+df = df_raw.rename(columns=rename_map).copy()
+
+for c in ["建設公司","營造公司","水電公司","經銷商A","經銷商B","經銷商C","品牌A","品牌B","品牌C"]:
     if c in df.columns:
         df[c] = df[c].apply(clean_name)
 
 if "年使用量_萬" in df.columns:
     df["年使用量_萬"] = df["年使用量_萬"].apply(coerce_num)
 
-for c in ["經銷A比","經銷B比","經銷C比"]:
+for c in ["經銷A比","經銷B比","經銷C比","品牌A比","品牌B比","品牌C比"]:
     if c in df.columns:
         df[c] = normalize_ratio(df[c])
 
@@ -210,6 +228,23 @@ rel = (pd.concat(dealer_blocks, ignore_index=True)
        if dealer_blocks else pd.DataFrame(columns=["建設公司","營造公司","水電公司","經銷商","配比"]))
 rel["經銷商"] = rel["經銷商"].apply(clean_name)
 rel = rel.dropna(subset=["經銷商","水電公司"]).copy()
+
+# 品牌展開（用配比，不乘以G）
+brand_blocks = []
+if "品牌A" in df.columns and "品牌A比" in df.columns:
+    brand_blocks.append(df[["建設公司","營造公司","水電公司","品牌A","品牌A比"]]
+                        .rename(columns={"品牌A":"品牌","品牌A比":"配比"}))
+if "品牌B" in df.columns and "品牌B比" in df.columns:
+    brand_blocks.append(df[["建設公司","營造公司","水電公司","品牌B","品牌B比"]]
+                        .rename(columns={"品牌B":"品牌","品牌B比":"配比"}))
+if "品牌C" in df.columns and "品牌C比" in df.columns:
+    brand_blocks.append(df[["建設公司","營造公司","水電公司","品牌C","品牌C比"]]
+                        .rename(columns={"品牌C":"品牌","品牌C比":"配比"}))
+brand_rel = (pd.concat(brand_blocks, ignore_index=True)
+             if brand_blocks else pd.DataFrame(columns=["建設公司","營造公司","水電公司","品牌","配比"]))
+if not brand_rel.empty:
+    brand_rel["品牌"] = brand_rel["品牌"].apply(clean_name)
+    brand_rel = brand_rel.dropna(subset=["品牌","水電公司"]).copy()
 
 # 水電年用量（每家水電一個值；若重複取首個非空）
 mep_vol_map = df.groupby("水電公司")["年使用量_萬"].apply(
@@ -265,10 +300,12 @@ def draw_chart(df_plot, name_col, value_col, title):
     st.plotly_chart(fig, use_container_width=True)
 
 # ====================== 資料切片 ======================
-down_dealer_raw = None   # 視覺用數值（建設/營造：平均配比；水電：額度_萬）
+down_dealer_raw = None   # 視覺用（建設/營造：平均配比；水電：額度_萬）
 down_dealer_tbl = None   # 表格用
 down_mep = None
 up_tbl = None
+brand_raw = None         # 水電品牌：視覺
+brand_tbl = None         # 水電品牌：表格
 
 if role == "建設公司":
     df_sel = df[df["建設公司"] == target]
@@ -296,6 +333,7 @@ elif role == "水電公司":
     mep_vol = df_sel["年使用量_萬"].dropna().unique()
     vol_val = float(mep_vol[0]) if len(mep_vol) > 0 and not pd.isna(mep_vol[0]) else 0.0
 
+    # 經銷商（配比 × 年用量）
     dealer_ratio = (rel_sel.groupby("經銷商")["配比"].mean()
                     .reset_index().sort_values("配比", ascending=False))
     dealer_ratio["額度_萬"] = dealer_ratio["配比"].astype(float) * vol_val
@@ -305,6 +343,25 @@ elif role == "水電公司":
         down_dealer_tbl["配比"] = down_dealer_tbl["配比"].apply(pct_str)
         down_dealer_tbl["額度_萬"] = down_dealer_tbl["額度_萬"].round(2)
 
+    # 線纜品牌（配比 × 年用量）
+    if not brand_rel.empty:
+        bsel = brand_rel[brand_rel["水電公司"] == target]
+        if not bsel.empty:
+            brand_ratio = (bsel.groupby("品牌")["配比"].mean()
+                           .reset_index().sort_values("配比", ascending=False))
+            brand_ratio["額度_萬"] = brand_ratio["配比"].astype(float) * vol_val
+            brand_raw = brand_ratio.rename(columns={"配比":"配比"})
+            brand_tbl = brand_raw.copy()
+            brand_tbl["配比"] = brand_tbl["配比"].apply(pct_str)
+            brand_tbl["額度_萬"] = brand_tbl["額度_萬"].round(2)
+        else:
+            brand_tbl = pd.DataFrame(columns=["品牌","配比","額度_萬"])
+            brand_raw = brand_tbl.copy()
+    else:
+        brand_tbl = pd.DataFrame(columns=["品牌","配比","額度_萬"])
+        brand_raw = brand_tbl.copy()
+
+    # 上游：建設×營造
     up_tbl = share_table(
         df_sel.assign(_公司=df_sel["建設公司"].fillna("")+" × "+df_sel["營造公司"].fillna("")),
         ["_公司"], "公司"
@@ -368,14 +425,18 @@ with tab_overview:
                      use_container_width=True)
 
     elif role == "水電公司":
-        st.markdown("#### 合作對象")
+        st.markdown("#### 合作對象與品牌")
         if down_dealer_tbl is not None and not down_dealer_tbl.empty:
             st.write("・經銷商（配比與額度）")
             st.dataframe(down_dealer_tbl.rename(columns={"額度_萬":"額度(萬)"}),
                          use_container_width=True)
+        if brand_tbl is not None and not brand_tbl.empty:
+            st.write("・線纜品牌（配比與額度）")
+            st.dataframe(brand_tbl.rename(columns={"額度_萬":"額度(萬)"}), use_container_width=True)
+
         mep_vol = df_sel["年使用量_萬"].dropna().unique()
         memo = f"{mep_vol[0]} 萬" if len(mep_vol)>0 else "—"
-        st.info(f"預估年使用量：{memo}（已用於圖表的金額換算）")
+        st.info(f"預估年使用量：{memo}（已用於經銷商與品牌的金額換算）")
 
     else:  # 營造公司
         st.markdown("#### 快速總覽")
@@ -397,8 +458,11 @@ with tab_partners:
     st.markdown("#### 視覺化")
     if role in ["建設公司","營造公司"] and down_mep is not None and not down_mep.empty:
         draw_chart(down_mep, down_mep.columns[0], "次數", f"{role} → 水電公司 合作次數")
-    if role == "水電公司" and down_dealer_raw is not None and not down_dealer_raw.empty:
-        draw_chart(down_dealer_raw.rename(columns={"額度_萬":"金額(萬)"}), "經銷商", "金額(萬)", "水電公司 → 終端經銷商 金額(萬)")
+    if role == "水電公司":
+        if down_dealer_raw is not None and not down_dealer_raw.empty:
+            draw_chart(down_dealer_raw.rename(columns={"額度_萬":"金額(萬)"}), "經銷商", "金額(萬)", "水電公司 → 終端經銷商 金額(萬)")
+        if brand_raw is not None and not brand_raw.empty:
+            draw_chart(brand_raw.rename(columns={"額度_萬":"金額(萬)"}), "品牌", "金額(萬)", "水電公司 → 線纜品牌 金額(萬)")
     if role == "營造公司" and down_dealer_raw is not None and not down_dealer_raw.empty:
         draw_chart(down_dealer_raw, "經銷商", "平均配比", "營造公司 → 終端經銷商 平均配比（按水電等權）")
     if role == "建設公司" and down_dealer_raw is not None and not down_dealer_raw.empty:
@@ -471,7 +535,7 @@ with tab_comp:
                 })
             out = pd.DataFrame(rows)
             if out.empty:
-                return out
+                return out, 0.0
             cat = pd.Categorical(out["威脅程度"], categories=["高","中","低"], ordered=True)
             out = out.assign(_order=cat).sort_values(["_order","重疊市場占比","共同客戶數"], ascending=[True, False, False]).drop(columns="_order")
             return out, target_total_market
@@ -505,16 +569,17 @@ with tab_comp:
             st.dataframe(co, use_container_width=True)
 
 with tab_export:
-    st.markdown("#### 匯出關係明細（經銷配比展開，不含年用量加權）")
+    st.markdown("#### 匯出關係明細（經銷配比與品牌配比展開，不含年用量加權）")
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_raw.to_excel(writer, index=False, sheet_name="原始資料")
         df.to_excel(writer, index=False, sheet_name="主檔(固定欄位命名)")
-        rel.to_excel(writer, index=False, sheet_name="關係明細(配比)")
+        rel.to_excel(writer, index=False, sheet_name="關係明細_經銷(配比)")
+        brand_rel.to_excel(writer, index=False, sheet_name="關係明細_品牌(配比)")
     st.download_button(
         "下載 Excel",
         data=output.getvalue(),
-        file_name="relations_search_dashboard_v11.xlsx",
+        file_name="relations_search_dashboard_v12.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
