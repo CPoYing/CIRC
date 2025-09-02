@@ -25,7 +25,6 @@ import numpy as np
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 warnings.filterwarnings('ignore')
 
@@ -788,13 +787,24 @@ class ConstructionDashboard:
         
         return pd.DataFrame(columns=["建設公司", "營造公司", "水電公司", "品牌", "配比"])
     
+    def _create_share_table(self, df: pd.DataFrame, group_cols: List[str], name_col: str) -> pd.DataFrame:
+        """Create share analysis table"""
+        cnt = df.groupby(group_cols).size().reset_index(name="次數")
+        total = cnt["次數"].sum()
+        if total == 0:
+            return pd.DataFrame(columns=[name_col, "次數", "占比"])
+        
+        cnt["占比"] = cnt["次數"] / total
+        cnt["占比"] = cnt["占比"].apply(Formatters.pct_str)
+        return cnt.sort_values("次數", ascending=False)
+    
     def render_role_analysis(self, role: str, target: str, df: pd.DataFrame, 
                            rel: pd.DataFrame, brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
         """Render analysis based on selected role"""
         analyzer = RelationshipAnalyzer(df, rel, brand_rel, mep_vol_map)
         comp_analyzer = CompetitorAnalyzer(df, rel, mep_vol_map)
         
-        # Role-specific analysis
+        # Role-specific analysis  
         if role == "建設公司":
             self._render_developer_analysis(target, df, rel, analyzer, df_raw)
         elif role == "營造公司":
@@ -805,7 +815,7 @@ class ConstructionDashboard:
             self._render_dealer_analysis(target, df, rel, mep_vol_map, analyzer, comp_analyzer, df_raw)
     
     def _render_developer_analysis(self, target: str, df: pd.DataFrame, 
-                                 rel: pd.DataFrame, analyzer: RelationshipAnalyzer):
+                                 rel: pd.DataFrame, analyzer: RelationshipAnalyzer, df_raw: pd.DataFrame):
         """Render analysis for developers"""
         df_sel = df[df["建設公司"] == target]
         rel_sel = rel[rel["建設公司"] == target]
@@ -829,7 +839,7 @@ class ConstructionDashboard:
             self._render_developer_visualizations(df_sel, rel_sel, analyzer)
         
         with tab_export:
-            self._render_export_section(df_raw, df, rel, brand_rel)
+            self._render_export_section(df_raw, df, rel, pd.DataFrame())
     
     def _render_developer_overview(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame, 
                                  analyzer: RelationshipAnalyzer):
@@ -894,48 +904,8 @@ class ConstructionDashboard:
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
     
-    def _create_share_table(self, df: pd.DataFrame, group_cols: List[str], name_col: str) -> pd.DataFrame:
-        """Create share analysis table"""
-        cnt = df.groupby(group_cols).size().reset_index(name="次數")
-        total = cnt["次數"].sum()
-        if total == 0:
-            return pd.DataFrame(columns=[name_col, "次數", "占比"])
-        
-        cnt["占比"] = cnt["次數"] / total
-        cnt["占比"] = cnt["占比"].apply(Formatters.pct_str)
-        return cnt.sort_values("次數", ascending=False)
-    
-    def _render_export_section(self, df_raw: pd.DataFrame, df: pd.DataFrame, 
-                             rel: pd.DataFrame, brand_rel: pd.DataFrame):
-        """Render export section"""
-        UIComponents.render_section_header("資料匯出")
-        
-        st.markdown("**匯出說明**")
-        st.markdown("""
-        - **原始資料**: 上傳的原始檔案內容
-        - **主檔**: 經過欄位標準化的主要資料
-        - **關係明細_經銷**: 經銷商配比關係展開資料  
-        - **關係明細_品牌**: 品牌配比關係展開資料
-        """)
-        
-        # Create Excel file
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df_raw.to_excel(writer, index=False, sheet_name="原始資料")
-            df.to_excel(writer, index=False, sheet_name="主檔(標準化)")
-            rel.to_excel(writer, index=False, sheet_name="關係明細_經銷(配比)")
-            if not brand_rel.empty:
-                brand_rel.to_excel(writer, index=False, sheet_name="關係明細_品牌(配比)")
-        
-        st.download_button(
-            label="📥 下載 Excel 分析報告",
-            data=output.getvalue(),
-            file_name=f"construction_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    
     def _render_contractor_analysis(self, target: str, df: pd.DataFrame, 
-                                  rel: pd.DataFrame, analyzer: RelationshipAnalyzer):
+                                  rel: pd.DataFrame, analyzer: RelationshipAnalyzer, df_raw: pd.DataFrame):
         """Render analysis for contractors"""
         df_sel = df[df["營造公司"] == target]
         rel_sel = rel[rel["營造公司"] == target]
@@ -962,7 +932,7 @@ class ConstructionDashboard:
             self._render_contractor_competitors(target, df)
             
         with tab_export:
-            self._render_export_section(df, rel, pd.DataFrame())
+            self._render_export_section(df_raw, df, rel, pd.DataFrame())
     
     def _render_contractor_overview(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame, 
                                   analyzer: RelationshipAnalyzer):
@@ -1044,7 +1014,7 @@ class ConstructionDashboard:
         UIComponents.render_dataframe_with_styling(competitors, "競爭對手分析")
     
     def _render_mep_analysis(self, target: str, df: pd.DataFrame, rel: pd.DataFrame, 
-                           brand_rel: pd.DataFrame, mep_vol_map: Dict):
+                           brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
         """Render analysis for MEP companies"""
         df_sel = df[df["水電公司"] == target]
         rel_sel = rel[rel["水電公司"] == target]
@@ -1075,7 +1045,7 @@ class ConstructionDashboard:
             self._render_mep_competitors(target, df)
             
         with tab_export:
-            self._render_export_section(df, rel, brand_rel)
+            self._render_export_section(df_raw, df, rel, brand_rel)
     
     def _render_mep_overview(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame, 
                            brand_rel: pd.DataFrame, target: str, vol_val: float):
@@ -1179,7 +1149,7 @@ class ConstructionDashboard:
     
     def _render_dealer_analysis(self, target: str, df: pd.DataFrame, rel: pd.DataFrame,
                               mep_vol_map: Dict, analyzer: RelationshipAnalyzer, 
-                              comp_analyzer: CompetitorAnalyzer):
+                              comp_analyzer: CompetitorAnalyzer, df_raw: pd.DataFrame):
         """Render analysis for dealers"""
         df_sel = rel[rel["經銷商"] == target].merge(
             df, on=["建設公司", "營造公司", "水電公司"], how="left", suffixes=("", "_df")
@@ -1207,7 +1177,7 @@ class ConstructionDashboard:
             self._render_dealer_competitors(target, rel, mep_vol_map, analyzer, comp_analyzer)
             
         with tab_export:
-            self._render_export_section(df, rel, pd.DataFrame())
+            self._render_export_section(df_raw, df, rel, pd.DataFrame())
     
     def _render_dealer_overview(self, df_sel: pd.DataFrame, rel: pd.DataFrame, target: str):
         """Render dealer overview"""
@@ -1270,6 +1240,35 @@ class ConstructionDashboard:
         else:
             UIComponents.render_dataframe_with_styling(comp_df, "詳細競爭分析")
             st.caption("說明：表格中的「重疊市場占比」為與單一對手的配對式重疊（加總可能 >100%）；上方的「競爭覆蓋率（去重）」為所有對手合併後的覆蓋比例（不會超過 100%）。")
+    
+    def _render_export_section(self, df_raw: pd.DataFrame, df: pd.DataFrame, 
+                             rel: pd.DataFrame, brand_rel: pd.DataFrame):
+        """Render export section"""
+        UIComponents.render_section_header("資料匯出")
+        
+        st.markdown("**匯出說明**")
+        st.markdown("""
+        - **原始資料**: 上傳的原始檔案內容
+        - **主檔**: 經過欄位標準化的主要資料
+        - **關係明細_經銷**: 經銷商配比關係展開資料  
+        - **關係明細_品牌**: 品牌配比關係展開資料
+        """)
+        
+        # Create Excel file
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_raw.to_excel(writer, index=False, sheet_name="原始資料")
+            df.to_excel(writer, index=False, sheet_name="主檔(標準化)")
+            rel.to_excel(writer, index=False, sheet_name="關係明細_經銷(配比)")
+            if not brand_rel.empty:
+                brand_rel.to_excel(writer, index=False, sheet_name="關係明細_品牌(配比)")
+        
+        st.download_button(
+            label="📥 下載 Excel 分析報告",
+            data=output.getvalue(),
+            file_name=f"construction_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
     
     def run(self):
         """Run the main application"""
