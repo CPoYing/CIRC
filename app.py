@@ -586,17 +586,6 @@ class ChartGenerator:
             )
         
         return fig
-    
-    @staticmethod
-    def create_kpi_card(label: str, value: str, is_primary: bool = True) -> str:
-        """Create enhanced KPI card HTML"""
-        card_class = "kpi-card" if not is_primary else "kpi-card primary"
-        return f"""
-        <div class="{card_class}">
-            <div class="kpi-label">{label}</div>
-            <div class="kpi-value">{value}</div>
-        </div>
-        """
 
 # ====================== UI Components ======================
 class UIComponents:
@@ -605,15 +594,33 @@ class UIComponents:
     @staticmethod
     def render_kpi_section(stats: Dict[str, int]):
         """Render KPI section with enhanced styling"""
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        
-        kpi_html = '<div class="kpi-container">'
-        for label, value in stats.items():
-            kpi_html += ChartGenerator.create_kpi_card(label, f"{value:,}")
-        kpi_html += '</div>'
-        
-        st.markdown(kpi_html, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        # Create a container with custom styling
+        with st.container():
+            # Add some custom CSS for the metrics
+            st.markdown("""
+                <style>
+                .metric-container {
+                    background: white;
+                    padding: 1rem;
+                    border-radius: 10px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    margin: 0.5rem 0;
+                }
+                </style>
+            """, unsafe_allow_html=True)
+            
+            # Use Streamlit native columns for layout
+            cols = st.columns(len(stats))
+            
+            for i, (label, value) in enumerate(stats.items()):
+                with cols[i]:
+                    # Use a container to apply styling
+                    with st.container():
+                        st.metric(
+                            label=label,
+                            value=f"{value:,}",
+                            delta=None
+                        )
     
     @staticmethod
     def render_section_header(title: str):
