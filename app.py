@@ -60,7 +60,7 @@ class Config:
 # ====================== Styling ======================
 def load_custom_css():
     """Load custom CSS for enhanced UI"""
-    st.markdown("""
+    st.markdown(""
         <style>
         /* Main container styling */
         .main-container {
@@ -252,7 +252,7 @@ def load_custom_css():
             box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
         }
         </style>
-    """, unsafe_allow_html=True)
+    "", unsafe_allow_html=True)
 
 # ====================== Data Processing Classes ======================
 class DataProcessor:
@@ -1505,4 +1505,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
