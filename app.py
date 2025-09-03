@@ -710,13 +710,12 @@ class ConstructionDashboard:
         total_dealers = rel["經銷商"].nunique() if not rel.empty else 0
         total_brands = brand_rel["品牌"].nunique() if not brand_rel.empty else 0
         
+        # 基本統計資訊（文字顯示）
         col1, col2 = st.columns(2)
-        
         with col1:
-            st.metric("總資料筆數", f"{total_records:,}")
-        
+            st.write(f"**總資料筆數：** {total_records:,}")
         with col2:
-            st.metric("關係連結數", f"{len(rel) + len(brand_rel):,}")
+            st.write(f"**關係連結數：** {len(rel) + len(brand_rel):,}")
         
         st.markdown("#### 各角色統計")
         
@@ -734,18 +733,67 @@ class ConstructionDashboard:
         with col4:
             st.metric("經銷商", f"{total_dealers:,}")
         
-        st.markdown("#### 品牌數據分析")
+        st.markdown("#### 線纜品牌數據")
+        
+        # 篩選控制項
         col1, col2 = st.columns(2)
         
         with col1:
-            st.metric("品牌總數", f"{total_brands:,}")
+            # 縣市篩選
+            cities = ["全部"] + sorted([city for city in df["縣市"].dropna().unique() if city])
+            selected_city = st.selectbox("選擇縣市", cities, key="city_filter")
         
         with col2:
-            if not brand_rel.empty and total_meps > 0:
-                brand_density = len(brand_rel) / total_meps
-                st.metric("品牌使用密度", f"{brand_density:.1f}/家")
+            # 區域篩選 - 根據選擇的縣市動態更新
+            if selected_city == "全部":
+                areas = ["全部"] + sorted([area for area in df["區域"].dropna().unique() if area])
             else:
-                st.metric("品牌使用密度", "—")
+                city_areas = df[df["縣市"] == selected_city]["區域"].dropna().unique()
+                areas = ["全部"] + sorted([area for area in city_areas if area])
+            selected_area = st.selectbox("選擇區域", areas, key="area_filter")
+        
+        # 根據篩選條件過濾品牌數據
+        filtered_brand_rel = brand_rel.copy()
+        filter_info = []
+        
+        if selected_city != "全部":
+            filtered_brand_rel = filtered_brand_rel[filtered_brand_rel["縣市"] == selected_city]
+            filter_info.append(f"縣市: {selected_city}")
+        
+        if selected_area != "全部":
+            filtered_brand_rel = filtered_brand_rel[filtered_brand_rel["區域"] == selected_area]
+            filter_info.append(f"區域: {selected_area}")
+        
+        # 計算篩選後的品牌統計
+        filtered_total_brands = filtered_brand_rel["品牌"].nunique() if not filtered_brand_rel.empty else 0
+        
+        # 顯示篩選後的品牌統計
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            display_title = "品牌總數"
+            if filter_info:
+                display_title += f" ({', '.join(filter_info)})"
+            st.metric(display_title, f"{filtered_total_brands:,}")
+        
+        with col2:
+            # 顯示篩選條件
+            if filter_info:
+                st.info(f"已篩選: {', '.join(filter_info)}")
+            else:
+                st.info("顯示全部地區數據")
+        
+        # 顯示品牌分布表格
+        if not filtered_brand_rel.empty:
+            st.markdown("**品牌分布統計**")
+            brand_stats = (filtered_brand_rel.groupby("品牌")["配比"]
+                          .agg(['count', 'mean', 'sum'])
+                          .reset_index()
+                          .rename(columns={'count': '出現次數', 'mean': '平均配比', 'sum': '總配比'}))
+            brand_stats["平均配比"] = brand_stats["平均配比"].apply(Formatters.pct_str)
+            brand_stats["總配比"] = brand_stats["總配比"].apply(Formatters.pct_str)
+            brand_stats = brand_stats.sort_values("出現次數", ascending=False)
+            UIComponents.render_dataframe_with_styling(brand_stats)
     
     def _render_analysis_settings(self, df: pd.DataFrame, rel: pd.DataFrame, 
                                 brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
