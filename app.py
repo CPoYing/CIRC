@@ -1,4 +1,4 @@
-# app.py - 百大建商｜關係鏈分析（單頁搜尋 v12 Enhanced）
+# app.py - 百大建商｜關係鏈分析
 """
 Enhanced Construction Supply Chain Analysis Dashboard
 Improvements:
