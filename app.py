@@ -31,7 +31,7 @@ warnings.filterwarnings('ignore')
 # ====================== Configuration ======================
 class Config:
     """Application configuration and constants"""
-    APP_TITLE = "百大建商｜關係鏈分析（單頁搜尋 v12 Enhanced）"
+    APP_TITLE = "百大建商｜關係鏈分析"
     VERSION = "v12 Enhanced"
     ROLES = ["建設公司", "營造公司", "水電公司", "經銷商"]
     CHART_TYPES = ["圓餅圖", "長條圖"]
