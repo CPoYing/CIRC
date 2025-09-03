@@ -1218,4 +1218,5 @@ class ConstructionDashboard:
                 brand_chart_data = brand_ratio.rename(columns={"額度_萬": "金額(萬)"})
                 
                 fig = ChartGenerator.create_chart(
-                    brand_chart_data, "品
+                    brand_chart_data, "品牌", "金額(萬)",
+                    "水電公司 → 線纜品牌
