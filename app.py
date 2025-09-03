@@ -646,16 +646,57 @@ class ConstructionDashboard:
         df_raw = self.read_file(uploaded_file)
         df, rel, brand_rel, mep_vol_map = self.process_data(df_raw)
         
-        # 整體數據概覽
-        st.markdown("### 📊 數據概覽")
-        self._render_overall_statistics(df, rel, brand_rel)
+        # 主要分頁設定
+        tab_overview, tab_analysis = st.tabs(["📊 數據概覽", "🎯 分析設定"])
         
-        # 分析設定區域
-        st.markdown("### 🎯 分析設定")
-        self._render_analysis_settings(df, rel, brand_rel, mep_vol_map, df_raw)
+        with tab_overview:
+            self._render_overall_statistics(df, rel, brand_rel)
+        
+        with tab_analysis:
+            self._render_analysis_settings(df, rel, brand_rel, mep_vol_map, df_raw)
     
     def _render_overall_statistics(self, df: pd.DataFrame, rel: pd.DataFrame, brand_rel: pd.DataFrame):
         """渲染整體統計數據"""
+        # 添加CSS樣式為指標卡片創建有色邊框
+        st.markdown("""
+            <style>
+            /* 為指標卡片添加淡色邊框 */
+            .stMetric {
+                background-color: white;
+                padding: 1rem;
+                border-radius: 0.5rem;
+                border-left: 4px solid transparent;
+                box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+            }
+            
+            /* 不同顏色的邊框 */
+            [data-testid="metric-container"]:nth-child(1) .stMetric {
+                border-left-color: #87CEEB; /* 淡藍色 */
+                background-color: #F0F8FF;
+            }
+            [data-testid="metric-container"]:nth-child(2) .stMetric {
+                border-left-color: #DDA0DD; /* 淡紫色 */
+                background-color: #F8F0FF;
+            }
+            [data-testid="metric-container"]:nth-child(3) .stMetric {
+                border-left-color: #98FB98; /* 淡綠色 */
+                background-color: #F0FFF0;
+            }
+            [data-testid="metric-container"]:nth-child(4) .stMetric {
+                border-left-color: #FFB6C1; /* 淡粉色 */
+                background-color: #FFF0F5;
+            }
+            [data-testid="metric-container"]:nth-child(5) .stMetric {
+                border-left-color: #F0E68C; /* 淡黃色 */
+                background-color: #FFFACD;
+            }
+            [data-testid="metric-container"]:nth-child(6) .stMetric {
+                border-left-color: #FFA07A; /* 淡橘色 */
+                background-color: #FFF8DC;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+        
         # 主要統計指標
         total_records = len(df)
         total_developers = df["建設公司"].nunique()
@@ -690,16 +731,20 @@ class ConstructionDashboard:
         with col4:
             st.metric("經銷商", f"{total_dealers:,}")
         
-        # 補充統計
-        st.markdown("#### 補充統計")
+        # 品牌數據分析
+        st.markdown("#### 品牌數據分析")
         col1, col2 = st.columns(2)
         
         with col1:
-            st.metric("品牌數量", f"{total_brands:,}")
+            st.metric("品牌總數", f"{total_brands:,}")
         
         with col2:
-            avg_volume = df['年使用量_萬'].mean() if '年使用量_萬' in df.columns and df['年使用量_萬'].notna().any() else 0
-            st.metric("平均年用量", f"{avg_volume:.1f}萬")
+            # 計算品牌使用密度（平均每家水電使用多少品牌）
+            if not brand_rel.empty and total_meps > 0:
+                brand_density = len(brand_rel) / total_meps
+                st.metric("品牌使用密度", f"{brand_density:.1f}/家")
+            else:
+                st.metric("品牌使用密度", "—")
     
     def _render_analysis_settings(self, df: pd.DataFrame, rel: pd.DataFrame, 
                                 brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
@@ -1173,147 +1218,4 @@ class ConstructionDashboard:
                 brand_chart_data = brand_ratio.rename(columns={"額度_萬": "金額(萬)"})
                 
                 fig = ChartGenerator.create_chart(
-                    brand_chart_data, "品牌", "金額(萬)",
-                    "水電公司 → 線纜品牌 金額(萬)", chart_type
-                )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
-    
-    def _render_mep_competitors(self, target: str, df: pd.DataFrame):
-        """Render MEP competitors analysis"""
-        UIComponents.render_section_header("競爭者分析")
-        
-        analyzer = CompetitorAnalyzer(df, pd.DataFrame(), {})
-        competitors = analyzer.water_competitors(target)
-        
-        if competitors.empty:
-            UIComponents.render_info_box("暫無競爭者資料")
-        else:
-            UIComponents.render_dataframe_with_styling(competitors, "競爭對手分析")
-    
-    def _render_dealer_analysis(self, target: str, df: pd.DataFrame, rel: pd.DataFrame,
-                              mep_vol_map: Dict, analyzer: RelationshipAnalyzer, 
-                              comp_analyzer: CompetitorAnalyzer, df_raw: pd.DataFrame):
-        """Render analysis for dealers"""
-        df_sel = rel[rel["經銷商"] == target].merge(
-            df, on=["建設公司", "營造公司", "水電公司"], how="left", suffixes=("", "_df")
-        )
-        
-        # KPI metrics
-        stats = {
-            "資料筆數": len(df_sel),
-            "建設家數": df_sel["建設公司"].nunique(),
-            "營造家數": df_sel["營造公司"].nunique(),
-            "水電家數": df_sel["水電公司"].nunique()
-        }
-        UIComponents.render_kpi_section(stats)
-        
-        # Analysis tabs
-        tab_overview, tab_partners, tab_comp, tab_export = st.tabs(["概覽", "合作對象視覺化", "競爭者", "資料匯出"])
-        
-        with tab_overview:
-            self._render_dealer_overview(df_sel, rel, target)
-        
-        with tab_partners:
-            self._render_dealer_visualizations(df_sel)
-        
-        with tab_comp:
-            self._render_dealer_competitors(target, rel, mep_vol_map, analyzer, comp_analyzer)
-            
-        with tab_export:
-            self._render_export_section(df_raw, df, rel, pd.DataFrame())
-    
-    def _render_dealer_overview(self, df_sel: pd.DataFrame, rel: pd.DataFrame, target: str):
-        """Render dealer overview"""
-        UIComponents.render_section_header("合作水電")
-        
-        # MEP partners with ratios
-        mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
-        
-        # Add dealer ratios
-        ratio_df = (rel[rel["經銷商"] == target]
-                   .groupby("水電公司")["配比"].mean()
-                   .reset_index()
-                   .rename(columns={"配比": "該經銷商配比"}))
-        
-        if not ratio_df.empty:
-            ratio_df["該經銷商配比"] = ratio_df["該經銷商配比"].apply(Formatters.pct_str)
-            mep_stats = mep_stats.merge(ratio_df, on="水電公司", how="left")
-        
-        UIComponents.render_dataframe_with_styling(mep_stats)
-    
-    def _render_dealer_visualizations(self, df_sel: pd.DataFrame):
-        """Render dealer visualizations"""
-        chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="dealer_chart")
-        
-        mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
-        if not mep_stats.empty:
-            fig = ChartGenerator.create_chart(
-                mep_stats, "水電公司", "次數",
-                "經銷商 → 水電公司 合作次數", chart_type
-            )
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-    
-    def _render_dealer_competitors(self, target: str, rel: pd.DataFrame, mep_vol_map: Dict,
-                                 analyzer: RelationshipAnalyzer, comp_analyzer: CompetitorAnalyzer):
-        """Render dealer competitors analysis"""
-        UIComponents.render_section_header("競爭者分析")
-        
-        # Get competition metrics
-        union_share, total_target = analyzer.union_overlap_share_and_total(target)
-        comp_df, target_total_market = comp_analyzer.dealer_competitors(target)
-        
-        # Display key metrics using native components
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("競爭覆蓋率（去重）", Formatters.pct_str(union_share))
-        with col2:
-            st.metric("總市場額度(萬)", Formatters.fmt_amount(total_target))
-        
-        # Competition table
-        if comp_df.empty:
-            UIComponents.render_info_box("暫無競爭者資料")
-        else:
-            UIComponents.render_dataframe_with_styling(comp_df, "詳細競爭分析")
-            st.caption("說明：表格中的「重疊市場占比」為與單一對手的配對式重疊（加總可能 >100%）；上方的「競爭覆蓋率（去重）」為所有對手合併後的覆蓋比例（不會超過 100%）。")
-    
-    def _render_export_section(self, df_raw: pd.DataFrame, df: pd.DataFrame, 
-                             rel: pd.DataFrame, brand_rel: pd.DataFrame):
-        """Render export section"""
-        UIComponents.render_section_header("資料匯出")
-        
-        st.write("**匯出說明**")
-        st.write("• 原始資料: 上傳的原始檔案內容")
-        st.write("• 主檔: 經過欄位標準化的主要資料")
-        st.write("• 關係明細_經銷: 經銷商配比關係展開資料")
-        st.write("• 關係明細_品牌: 品牌配比關係展開資料")
-        
-        # Create Excel file
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df_raw.to_excel(writer, index=False, sheet_name="原始資料")
-            df.to_excel(writer, index=False, sheet_name="主檔(標準化)")
-            rel.to_excel(writer, index=False, sheet_name="關係明細_經銷(配比)")
-            if not brand_rel.empty:
-                brand_rel.to_excel(writer, index=False, sheet_name="關係明細_品牌(配比)")
-        
-        st.download_button(
-            label="📥 下載 Excel 分析報告",
-            data=output.getvalue(),
-            file_name=f"construction_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-# ====================== Application Entry Point ======================
-def main():
-    """Main application entry point"""
-    try:
-        dashboard = ConstructionDashboard()
-        dashboard.run()
-    except Exception as e:
-        st.error(f"應用程式發生錯誤：{str(e)}")
-        st.exception(e)
-
-if __name__ == "__main__":
-    main()
+                    brand_chart_data, "品
