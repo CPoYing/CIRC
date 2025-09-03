@@ -843,14 +843,31 @@ class ConstructionDashboard:
                     if idx < len(brand_stats):
                         brand = brand_stats[idx]
                         with cols[j]:
-                            # 轉換為億為單位
-                            volume_yi = brand["加權年使用量_萬"] / 10000
+                            # 獲取該品牌的水電公司詳細資訊
+                            brand_data = filtered_brand_rel[filtered_brand_rel["品牌"] == brand["品牌"]]
+                            mep_details = []
                             
-                            # 使用streamlit原生metric但添加占比
+                            for mep in brand_data["水電公司"].unique():
+                                mep_brand_data = brand_data[brand_data["水電公司"] == mep]
+                                avg_ratio = mep_brand_data["配比"].mean()
+                                
+                                # 取得該水電的年使用量
+                                mep_volume = df[df["水電公司"] == mep]["年使用量_萬"].dropna()
+                                volume = float(mep_volume.iloc[0]) if len(mep_volume) > 0 else 0.0
+                                weighted_vol = volume * float(avg_ratio or 0.0)
+                                
+                                mep_details.append(f"{mep}: {weighted_vol:,.1f}萬 ({Formatters.pct_str(avg_ratio)})")
+                            
+                            # 合併水電詳細資訊
+                            mep_tooltip = "\\n".join(mep_details)
+                            
+                            # 使用streamlit原生metric
+                            volume_wan = brand["加權年使用量_萬"]
                             st.metric(
                                 label=brand["品牌"],
-                                value=f"{volume_yi:,.2f}億",
-                                delta=f"{brand['合作水電數']:,}家水電"
+                                value=f"{volume_wan:,.1f}萬",
+                                delta=f"{brand['合作水電數']:,}家水電",
+                                help=f"水電公司明細:\\n{mep_tooltip}"
                             )
                             # 在metric下方顯示占比
                             st.markdown(f"""
