@@ -783,17 +783,55 @@ class ConstructionDashboard:
             else:
                 st.info("顯示全部地區數據")
         
-        # 顯示品牌分布表格
+        # 顯示品牌字卡
         if not filtered_brand_rel.empty:
-            st.markdown("**品牌分布統計**")
-            brand_stats = (filtered_brand_rel.groupby("品牌")["配比"]
-                          .agg(['count', 'mean', 'sum'])
-                          .reset_index()
-                          .rename(columns={'count': '出現次數', 'mean': '平均配比', 'sum': '總配比'}))
-            brand_stats["平均配比"] = brand_stats["平均配比"].apply(Formatters.pct_str)
-            brand_stats["總配比"] = brand_stats["總配比"].apply(Formatters.pct_str)
-            brand_stats = brand_stats.sort_values("出現次數", ascending=False)
-            UIComponents.render_dataframe_with_styling(brand_stats)
+            st.markdown("**各品牌數據分析**")
+            
+            # 計算各品牌的加權統計
+            brand_stats = []
+            for brand_name in filtered_brand_rel["品牌"].unique():
+                brand_data = filtered_brand_rel[filtered_brand_rel["品牌"] == brand_name]
+                
+                # 計算該品牌的總加權年使用量
+                total_weighted_volume = 0.0
+                mep_count = 0
+                
+                for _, row in brand_data.iterrows():
+                    mep = row["水電公司"]
+                    ratio = float(row["配比"] or 0.0)
+                    
+                    # 從原始df取得該水電公司的年使用量
+                    mep_volume = df[df["水電公司"] == mep]["年使用量_萬"].dropna()
+                    if len(mep_volume) > 0:
+                        volume = float(mep_volume.iloc[0])
+                        total_weighted_volume += volume * ratio
+                        mep_count += 1
+                
+                brand_stats.append({
+                    "品牌": brand_name,
+                    "合作水電數": mep_count,
+                    "加權年使用量": total_weighted_volume
+                })
+            
+            # 按加權年使用量排序
+            brand_stats = sorted(brand_stats, key=lambda x: x["加權年使用量"], reverse=True)
+            
+            # 創建品牌字卡
+            # 每行顯示3個品牌
+            for i in range(0, len(brand_stats), 3):
+                cols = st.columns(3)
+                for j in range(3):
+                    idx = i + j
+                    if idx < len(brand_stats):
+                        brand = brand_stats[idx]
+                        with cols[j]:
+                            st.metric(
+                                label=brand["品牌"],
+                                value=f"{brand['加權年使用量']:.1f}萬",
+                                delta=f"{brand['合作水電數']}家水電"
+                            )
+        else:
+            st.info("所選地區暫無線纜品牌數據")
     
     def _render_analysis_settings(self, df: pd.DataFrame, rel: pd.DataFrame, 
                                 brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
