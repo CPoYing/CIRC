@@ -787,49 +787,77 @@ class ConstructionDashboard:
         if not filtered_brand_rel.empty:
             st.markdown("**各品牌數據分析**")
             
-            # 計算各品牌的加權統計
+            # 計算篩選結果總數
+            total_filtered_records = len(filtered_brand_rel)
+            st.info(f"篩選結果：共 {total_filtered_records:,} 筆品牌配比記錄")
+            
+            # 計算各品牌的加權統計（去重水電）
             brand_stats = []
+            total_market_volume = 0.0  # 用於計算占比
+            
+            # 先計算總市場量（去重水電）
+            unique_meps = filtered_brand_rel["水電公司"].unique()
+            for mep in unique_meps:
+                mep_volume = df[df["水電公司"] == mep]["年使用量_萬"].dropna()
+                if len(mep_volume) > 0:
+                    total_market_volume += float(mep_volume.iloc[0])
+            
+            # 計算各品牌統計（每間水電只算一次）
+            processed_meps = set()
             for brand_name in filtered_brand_rel["品牌"].unique():
                 brand_data = filtered_brand_rel[filtered_brand_rel["品牌"] == brand_name]
                 
-                # 計算該品牌的總加權年使用量
+                # 去重計算：每間水電只計算一次
+                unique_meps_for_brand = brand_data["水電公司"].unique()
                 total_weighted_volume = 0.0
-                mep_count = 0
                 
-                for _, row in brand_data.iterrows():
-                    mep = row["水電公司"]
-                    ratio = float(row["配比"] or 0.0)
+                for mep in unique_meps_for_brand:
+                    # 該水電對此品牌的平均配比
+                    mep_brand_data = brand_data[brand_data["水電公司"] == mep]
+                    avg_ratio = mep_brand_data["配比"].mean()
                     
-                    # 從原始df取得該水電公司的年使用量
+                    # 該水電的年使用量
                     mep_volume = df[df["水電公司"] == mep]["年使用量_萬"].dropna()
                     if len(mep_volume) > 0:
                         volume = float(mep_volume.iloc[0])
-                        total_weighted_volume += volume * ratio
-                        mep_count += 1
+                        total_weighted_volume += volume * float(avg_ratio or 0.0)
+                
+                # 計算占比
+                market_share = (total_weighted_volume / total_market_volume) if total_market_volume > 0 else 0.0
                 
                 brand_stats.append({
                     "品牌": brand_name,
-                    "合作水電數": mep_count,
-                    "加權年使用量": total_weighted_volume
+                    "合作水電數": len(unique_meps_for_brand),
+                    "加權年使用量_萬": total_weighted_volume,
+                    "市場占比": market_share
                 })
             
             # 按加權年使用量排序
-            brand_stats = sorted(brand_stats, key=lambda x: x["加權年使用量"], reverse=True)
+            brand_stats = sorted(brand_stats, key=lambda x: x["加權年使用量_萬"], reverse=True)
             
-            # 創建品牌字卡
-            # 每行顯示3個品牌
-            for i in range(0, len(brand_stats), 3):
-                cols = st.columns(3)
-                for j in range(3):
+            # 創建品牌字卡 - 每行4個
+            for i in range(0, len(brand_stats), 4):
+                cols = st.columns(4)
+                for j in range(4):
                     idx = i + j
                     if idx < len(brand_stats):
                         brand = brand_stats[idx]
                         with cols[j]:
+                            # 轉換為億為單位
+                            volume_yi = brand["加權年使用量_萬"] / 10000
+                            
+                            # 使用streamlit原生metric但添加占比
                             st.metric(
                                 label=brand["品牌"],
-                                value=f"{brand['加權年使用量']:.1f}萬",
-                                delta=f"{brand['合作水電數']}家水電"
+                                value=f"{volume_yi:,.2f}億",
+                                delta=f"{brand['合作水電數']:,}家水電"
                             )
+                            # 在metric下方顯示占比
+                            st.markdown(f"""
+                                <div style="text-align: center; color: #737373; font-size: 12px; margin-top: -10px;">
+                                    ({Formatters.pct_str(brand["市場占比"])})
+                                </div>
+                            """, unsafe_allow_html=True)
         else:
             st.info("所選地區暫無線纜品牌數據")
     
