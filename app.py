@@ -48,7 +48,9 @@ class Config:
         'brand_b': (15, ["品牌B", "線纜品牌B", "線纜品牌2", "品牌2"]),
         'brand_ratio_b': (16, ["品牌B佔比(%)", "品牌B配比", "品牌2佔比", "B品牌佔比", "B品牌配比"]),
         'brand_c': (17, ["品牌C", "線纜品牌C", "線纜品牌3", "品牌3"]),
-        'brand_ratio_c': (18, ["品牌C佔比(%)", "品牌C配比", "品牌3佔比", "C品牌佔比", "C品牌配比"])
+        'brand_ratio_c': (18, ["品牌C佔比(%)", "品牌C配比", "品牌3佔比", "C品牌佔比", "C品牌配比"]),
+        'city': (19, ["縣市", "縣/市", "所在縣市"]),
+        'area': (20, ["區域", "地區", "區/鄉鎮"])
     }
 
 # ====================== Data Processing Classes ======================
@@ -548,11 +550,17 @@ class ConstructionDashboard:
             if columns.get(brand_ratio_key):
                 rename_map[columns[brand_ratio_key]] = f"品牌{suffix.upper()}比"
         
+        # Add geographical columns
+        if columns.get('city'):
+            rename_map[columns['city']] = "縣市"
+        if columns.get('area'):
+            rename_map[columns['area']] = "區域"
+        
         # Apply transformations
         df = df_raw.rename(columns=rename_map).copy()
         
         # Clean text columns
-        text_cols = ["建設公司", "營造公司", "水電公司"] + [f"經銷商{s}" for s in ['A','B','C']] + [f"品牌{s}" for s in ['A','B','C']]
+        text_cols = ["建設公司", "營造公司", "水電公司", "縣市", "區域"] + [f"經銷商{s}" for s in ['A','B','C']] + [f"品牌{s}" for s in ['A','B','C']]
         for col in text_cols:
             if col in df.columns:
                 df[col] = df[col].apply(processor.clean_name)
@@ -585,7 +593,13 @@ class ConstructionDashboard:
             dealer_col = f"經銷商{suffix}"
             ratio_col = f"經銷{suffix}比"
             if dealer_col in df.columns and ratio_col in df.columns:
-                block = df[["建設公司", "營造公司", "水電公司", dealer_col, ratio_col]].rename(
+                base_cols = ["建設公司", "營造公司", "水電公司"]
+                if "縣市" in df.columns:
+                    base_cols.append("縣市")
+                if "區域" in df.columns:
+                    base_cols.append("區域")
+                
+                block = df[base_cols + [dealer_col, ratio_col]].rename(
                     columns={dealer_col: "經銷商", ratio_col: "配比"}
                 )
                 blocks.append(block)
@@ -595,7 +609,12 @@ class ConstructionDashboard:
             rel["經銷商"] = rel["經銷商"].apply(DataProcessor.clean_name)
             return rel.dropna(subset=["經銷商", "水電公司"])
         
-        return pd.DataFrame(columns=["建設公司", "營造公司", "水電公司", "經銷商", "配比"])
+        base_cols = ["建設公司", "營造公司", "水電公司", "經銷商", "配比"]
+        if "縣市" in df.columns:
+            base_cols.insert(-2, "縣市")
+        if "區域" in df.columns:
+            base_cols.insert(-2, "區域")
+        return pd.DataFrame(columns=base_cols)
     
     def _create_brand_relations(self, df: pd.DataFrame) -> pd.DataFrame:
         """Create brand relationship dataframe"""
@@ -604,7 +623,13 @@ class ConstructionDashboard:
             brand_col = f"品牌{suffix}"
             ratio_col = f"品牌{suffix}比"
             if brand_col in df.columns and ratio_col in df.columns:
-                block = df[["建設公司", "營造公司", "水電公司", brand_col, ratio_col]].rename(
+                base_cols = ["建設公司", "營造公司", "水電公司"]
+                if "縣市" in df.columns:
+                    base_cols.append("縣市")
+                if "區域" in df.columns:
+                    base_cols.append("區域")
+                
+                block = df[base_cols + [brand_col, ratio_col]].rename(
                     columns={brand_col: "品牌", ratio_col: "配比"}
                 )
                 blocks.append(block)
@@ -614,7 +639,12 @@ class ConstructionDashboard:
             brand_rel["品牌"] = brand_rel["品牌"].apply(DataProcessor.clean_name)
             return brand_rel.dropna(subset=["品牌", "水電公司"])
         
-        return pd.DataFrame(columns=["建設公司", "營造公司", "水電公司", "品牌", "配比"])
+        base_cols = ["建設公司", "營造公司", "水電公司", "品牌", "配比"]
+        if "縣市" in df.columns:
+            base_cols.insert(-2, "縣市")
+        if "區域" in df.columns:
+            base_cols.insert(-2, "區域")
+        return pd.DataFrame(columns=base_cols)
     
     def run(self):
         """Run the main application"""
@@ -634,6 +664,7 @@ class ConstructionDashboard:
                 st.write("• 固定欄位順序：D=建設公司, E=營造公司, F=水電公司, G=年用量")
                 st.write("• H/J/L=經銷商A/B/C, I/K/M=對應配比")
                 st.write("• N/P/R=品牌A/B/C, O/Q/S=對應占比")
+                st.write("• T=縣市, U=區域")
                 st.write("")
                 st.write("**支援分析角色：**")
                 st.write("• 建設公司：查看營造、水電、經銷商合作關係")
@@ -1193,30 +1224,3 @@ class ConstructionDashboard:
                                  target: str, vol_val: float):
         """Render MEP visualizations"""
         chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="mep_chart")
-        
-        # Dealer chart
-        if not rel_sel.empty:
-            dealer_ratio = (rel_sel.groupby("經銷商")["配比"].mean()
-                           .reset_index().sort_values("配比", ascending=False))
-            dealer_ratio["額度_萬"] = dealer_ratio["配比"].astype(float) * vol_val
-            dealer_chart_data = dealer_ratio.rename(columns={"額度_萬": "金額(萬)"})
-            
-            fig = ChartGenerator.create_chart(
-                dealer_chart_data, "經銷商", "金額(萬)",
-                "水電公司 → 終端經銷商 金額(萬)", chart_type
-            )
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-        
-        # Brand chart
-        if not brand_rel.empty:
-            brand_sel = brand_rel[brand_rel["水電公司"] == target]
-            if not brand_sel.empty:
-                brand_ratio = (brand_sel.groupby("品牌")["配比"].mean()
-                              .reset_index().sort_values("配比", ascending=False))
-                brand_ratio["額度_萬"] = brand_ratio["配比"].astype(float) * vol_val
-                brand_chart_data = brand_ratio.rename(columns={"額度_萬": "金額(萬)"})
-                
-                fig = ChartGenerator.create_chart(
-                    brand_chart_data, "品牌", "金額(萬)",
-                    "水電公司 → 線纜品牌
