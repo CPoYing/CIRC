@@ -786,7 +786,7 @@ class ConstructionDashboard:
             st.metric(display_title, f"{filtered_total_brands:,}")
         
         with col2:
-            st.metric("篩選金額總數", f"{filtered_total_amount:,.1f}萬")
+            st.metric("金額總數", f"{filtered_total_amount:,.1f}萬")
         
         with col3:
             # 顯示篩選條件
