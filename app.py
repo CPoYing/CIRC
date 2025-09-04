@@ -786,7 +786,7 @@ class ConstructionDashboard:
             st.metric(display_title, f"{filtered_total_brands:,}")
         
         with col2:
-            st.metric("金額總數", f"{filtered_total_amount:,.1f}萬")
+            st.metric("篩選金額總數", f"{filtered_total_amount:,.1f}萬")
         
         with col3:
             # 顯示篩選條件
@@ -1398,13 +1398,19 @@ class ConstructionDashboard:
     
     def _render_dealer_visualizations(self, df_sel: pd.DataFrame):
         """Render dealer visualizations"""
-        chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="dealer_chart")
+        col1, col2 = st.columns(2)
+        with col1:
+            chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="dealer_chart")
+        with col2:
+            top_n = st.selectbox("顯示前幾大", [5, 10, 15, 20, "全部"], index=0, key="dealer_top_n")
         
         mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
         if not mep_stats.empty:
+            if top_n != "全部":
+                mep_stats = mep_stats.head(top_n)
             fig = ChartGenerator.create_chart(
                 mep_stats, "水電公司", "次數",
-                "經銷商 → 水電公司 合作次數", chart_type
+                f"經銷商 → 水電公司 合作次數 (前{top_n if top_n != '全部' else len(mep_stats)}大)", chart_type
             )
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
