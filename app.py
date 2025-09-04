@@ -767,8 +767,17 @@ class ConstructionDashboard:
         # 計算篩選後的品牌統計
         filtered_total_brands = filtered_brand_rel["品牌"].nunique() if not filtered_brand_rel.empty else 0
         
-        # 顯示篩選後的品牌統計
-        col1, col2 = st.columns(2)
+        # 計算篩選後的金額總數
+        filtered_total_amount = 0.0
+        if not filtered_brand_rel.empty:
+            unique_meps = filtered_brand_rel["水電公司"].unique()
+            for mep in unique_meps:
+                mep_volume = df[df["水電公司"] == mep]["年使用量_萬"].dropna()
+                if len(mep_volume) > 0:
+                    filtered_total_amount += float(mep_volume.iloc[0])
+        
+        # 顯示篩選後的統計 - 調整版面
+        col1, col2, col3 = st.columns([1, 1, 2])
         
         with col1:
             display_title = "品牌總數"
@@ -777,6 +786,9 @@ class ConstructionDashboard:
             st.metric(display_title, f"{filtered_total_brands:,}")
         
         with col2:
+            st.metric("篩選金額總數", f"{filtered_total_amount:,.1f}萬")
+        
+        with col3:
             # 顯示篩選條件
             if filter_info:
                 st.info(f"已篩選: {', '.join(filter_info)}")
