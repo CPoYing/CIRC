@@ -962,18 +962,18 @@ class ConstructionDashboard:
         df_dominant_brands = df_brands.loc[idx].reset_index(drop=True)
 
         # 準備 GeoJSON 數據，並為每個區域添加「主導品牌」屬性
-        # 修正錯誤：安全地存取 GeoJSON 的屬性鍵
+        # 修正錯誤：安全地存取 GeoJSON 的屬性鍵，並創建匹配的 `locations` 鍵
         for feature in geojson_data['features']:
             county_name = feature['properties'].get('COUNTYNAME', '')
             town_name = feature['properties'].get('TOWNNAME', '')
-            full_name = county_name + town_name
+            feature['properties']['full_area_name'] = county_name + town_name
             
-            if full_name in df_dominant_brands['full_area_name'].values:
-                brand_info = df_dominant_brands[df_dominant_brands['full_area_name'] == full_name].iloc[0]
+            if feature['properties']['full_area_name'] in df_dominant_brands['full_area_name'].values:
+                brand_info = df_dominant_brands[df_dominant_brands['full_area_name'] == feature['properties']['full_area_name']].iloc[0]
                 feature['properties']['dominant_brand'] = brand_info['brand']
             else:
                 feature['properties']['dominant_brand'] = "無資料"
-        
+
         # 設定淺色調色盤
         unique_brands = sorted(df_dominant_brands['brand'].unique().tolist())
         color_palette = px.colors.qualitative.Pastel
@@ -981,11 +981,12 @@ class ConstructionDashboard:
         color_map['無資料'] = '#e0e0e0' 
 
         # 建立地圖
+        # 修正錯誤：將 featureidkey 設定為我們在 GeoJSON 中新創建的 'full_area_name' 鍵
         fig = px.choropleth_mapbox(
             df_dominant_brands,
             geojson=geojson_data,
             locations='full_area_name',
-            featureidkey="properties.COUNTYNAME",
+            featureidkey="properties.full_area_name",
             color='brand',
             mapbox_style="carto-positron",
             zoom=6.5,
