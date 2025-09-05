@@ -960,8 +960,9 @@ class ConstructionDashboard:
             with col2:
                 st.success(f"準備分析：{role} - {target}")
                 
+                # 修改按鈕名稱
                 if st.button(
-                    "🚀 開始深度分析",
+                    "🚀 開始分析",
                     type="primary",
                     use_container_width=True
                 ):
@@ -991,14 +992,17 @@ class ConstructionDashboard:
         analyzer = RelationshipAnalyzer(df, rel, brand_rel, mep_vol_map)
         comp_analyzer = CompetitorAnalyzer(df, rel, mep_vol_map)
         
-        if role == "建設公司":
-            self._render_developer_analysis(target, df, rel, analyzer, df_raw)
-        elif role == "營造公司":
-            self._render_contractor_analysis(target, df, rel, analyzer, df_raw)
-        elif role == "水電公司":
-            self._render_mep_analysis(target, df, rel, brand_rel, mep_vol_map, df_raw)
-        elif role == "經銷商":
-            self._render_dealer_analysis(target, df, rel, mep_vol_map, analyzer, comp_analyzer, df_raw)
+        # 調整佈局，確保內容能拉寬
+        analysis_container = st.container()
+        with analysis_container:
+            if role == "建設公司":
+                self._render_developer_analysis(target, df, rel, analyzer, df_raw)
+            elif role == "營造公司":
+                self._render_contractor_analysis(target, df, rel, analyzer, df_raw)
+            elif role == "水電公司":
+                self._render_mep_analysis(target, df, rel, brand_rel, mep_vol_map, df_raw)
+            elif role == "經銷商":
+                self._render_dealer_analysis(target, df, rel, mep_vol_map, analyzer, comp_analyzer, df_raw)
     
     def _render_developer_analysis(self, target: str, df: pd.DataFrame, 
                                  rel: pd.DataFrame, analyzer: RelationshipAnalyzer, df_raw: pd.DataFrame):
@@ -1175,7 +1179,7 @@ class ConstructionDashboard:
                 "營造公司 → 建設公司合作分析", chart_type
             )
             if fig:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="con_dev_chart")
         
         mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
         if not mep_stats.empty:
@@ -1184,7 +1188,7 @@ class ConstructionDashboard:
                 "營造公司 → 水電公司合作分析", chart_type
             )
             if fig:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="con_mep_chart")
         
         dealer_analysis = analyzer.avg_dealer_ratio_across_unique_mep(rel_sel)
         if not dealer_analysis.empty:
@@ -1193,7 +1197,7 @@ class ConstructionDashboard:
                 "營造公司 → 經銷商配比分析", chart_type
             )
             if fig:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="con_dealer_chart")
         
         brand_analysis = analyzer.avg_brand_ratio_across_unique_mep(df_sel)
         if not brand_analysis.empty:
@@ -1202,7 +1206,7 @@ class ConstructionDashboard:
                 "營造公司 → 線纜品牌配比分析（按使用量加權）", chart_type
             )
             if fig:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="con_brand_chart")
     
     def _render_contractor_competitors(self, target: str, df: pd.DataFrame):
         """渲染營造公司競爭者分析"""
@@ -1317,7 +1321,7 @@ class ConstructionDashboard:
                 "水電公司 → 終端經銷商 金額(萬)", chart_type
             )
             if fig:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="mep_dealer_chart")
         
         if not brand_rel.empty:
             brand_sel = brand_rel[brand_rel["水電公司"] == target]
@@ -1332,7 +1336,7 @@ class ConstructionDashboard:
                     "水電公司 → 線纜品牌 金額(萬)", chart_type
                 )
                 if fig:
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key="mep_brand_chart")
     
     def _render_mep_competitors(self, target: str, df: pd.DataFrame):
         """渲染水電公司競爭者分析"""
