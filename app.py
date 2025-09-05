@@ -322,7 +322,7 @@ class ChartGenerator:
     
     @staticmethod
     def create_chart(df_plot: pd.DataFrame, name_col: str, value_col: str, 
-                     title: str, chart_type: str = "圓餅圖") -> go.Figure:
+                     title: str, chart_type: str = "圓餅圖", key_suffix: str = "") -> go.Figure:
         """創建具有更好樣式的進階圖表"""
         if df_plot is None or df_plot.empty:
             return None
@@ -859,8 +859,6 @@ class ConstructionDashboard:
                     if idx < len(brand_stats):
                         brand = brand_stats[idx]
                         with cols[j]:
-                            volume_wan = brand["加權年使用量_萬"]
-                            
                             # 使用自訂的 HTML 和 CSS 樣式
                             st.markdown(f"""
                             <div style="
@@ -876,7 +874,7 @@ class ConstructionDashboard:
                                 background-color: #f9f9f9;
                             ">
                                 <div style="font-size: 1.1rem; font-weight: bold; color: #333;">{brand['品牌']}</div>
-                                <div style="font-size: 2.5rem; font-weight: bold; color: #4CAF50; margin-top: 5px;">{volume_wan:,.1f}萬</div>
+                                <div style="font-size: 2.5rem; font-weight: bold; color: #4CAF50; margin-top: 5px;">{brand["加權年使用量_萬"]:,.1f}萬</div>
                                 <div style="font-size: 0.9rem; color: #666; margin-top: 10px;">
                                     市場佔比：{Formatters.pct_str(brand["市場占比"])}
                                 </div>
@@ -895,85 +893,79 @@ class ConstructionDashboard:
                                  brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
         """渲染分析設定區域"""
         
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.markdown("**選擇分析角色**")
-            role_options = [
-                ("🏢 建設公司", "建設公司"),
-                ("🔨 營造公司", "營造公司"), 
-                ("⚡ 水電公司", "水電公司"),
-                ("🛒 經銷商", "經銷商")
-            ]
-            
-            selected_role_display = st.selectbox(
-                "角色類型",
-                options=[display for display, _ in role_options],
-                help="選擇要分析的角色類型",
-                label_visibility="collapsed"
-            )
-            
-            role = next(actual for display, actual in role_options if display == selected_role_display)
+        # 移除 st.columns，直接在主容器中顯示
+        st.markdown("**選擇分析角色**")
+        role_options = [
+            ("🏢 建設公司", "建設公司"),
+            ("🔨 營造公司", "營造公司"), 
+            ("⚡ 水電公司", "水電公司"),
+            ("🛒 經銷商", "經銷商")
+        ]
+        
+        selected_role_display = st.selectbox(
+            "角色類型",
+            options=[display for display, _ in role_options],
+            help="選擇要分析的角色類型",
+            label_visibility="collapsed"
+        )
+        
+        role = next(actual for display, actual in role_options if display == selected_role_display)
         
         st.markdown("")
         
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.markdown("**選擇目標公司**")
-            
-            if role == "建設公司":
-                options = sorted(df["建設公司"].dropna().unique())
-            elif role == "營造公司":
-                options = sorted(df["營造公司"].dropna().unique())
-            elif role == "水電公司":
-                options = sorted(df["水電公司"].dropna().unique())
-            else:
-                options = sorted(rel["經銷商"].dropna().unique())
-            
-            search_term = st.text_input(
-                "搜尋公司名稱", 
-                placeholder="輸入關鍵字過濾公司列表...",
-                help="支援模糊搜尋，輸入部分公司名稱即可",
-                label_visibility="collapsed"
-            )
-            
-            if search_term:
-                filtered_options = [opt for opt in options 
-                                    if search_term.lower() in str(opt).lower()]
-                if not filtered_options:
-                    st.warning(f"找不到包含 '{search_term}' 的公司")
-                    filtered_options = options
-            else:
-                filtered_options = options
-            
-            if search_term and filtered_options:
-                st.caption(f"找到 {len(filtered_options)} 家公司")
-            
-            target = st.selectbox(
-                "目標公司", 
-                filtered_options,
-                help=f"從 {len(options)} 家{role}中選擇",
-                label_visibility="collapsed"
-            )
+        st.markdown("**選擇目標公司**")
         
-        if target:
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                st.success(f"準備分析：{role} - {target}")
-                
-                # 修改按鈕名稱
-                if st.button(
-                    "🚀 開始分析",
-                    type="primary",
-                    use_container_width=True
-                ):
-                    st.markdown("---")
-                    st.markdown("### 📈 分析結果")
-                    
-                    self.render_role_analysis(role, target, df, rel, brand_rel, mep_vol_map, df_raw)
+        if role == "建設公司":
+            options = sorted(df["建設公司"].dropna().unique())
+        elif role == "營造公司":
+            options = sorted(df["營造公司"].dropna().unique())
+        elif role == "水電公司":
+            options = sorted(df["水電公司"].dropna().unique())
         else:
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                st.info("請選擇要分析的目標公司")
+            options = sorted(rel["經銷商"].dropna().unique())
+        
+        search_term = st.text_input(
+            "搜尋公司名稱", 
+            placeholder="輸入關鍵字過濾公司列表...",
+            help="支援模糊搜尋，輸入部分公司名稱即可",
+            label_visibility="collapsed"
+        )
+        
+        if search_term:
+            filtered_options = [opt for opt in options 
+                                if search_term.lower() in str(opt).lower()]
+            if not filtered_options:
+                st.warning(f"找不到包含 '{search_term}' 的公司")
+                filtered_options = options
+        else:
+            filtered_options = options
+        
+        if search_term and filtered_options:
+            st.caption(f"找到 {len(filtered_options)} 家公司")
+        
+        target = st.selectbox(
+            "目標公司", 
+            filtered_options,
+            help=f"從 {len(options)} 家{role}中選擇",
+            label_visibility="collapsed"
+        )
+    
+        if target:
+            st.success(f"準備分析：{role} - {target}")
+            
+            # 修改按鈕名稱
+            if st.button(
+                "🚀 開始分析",
+                type="primary",
+                use_container_width=True
+            ):
+                st.markdown("---")
+                st.markdown("### 📈 分析結果")
+                
+                self.render_role_analysis(role, target, df, rel, brand_rel, mep_vol_map, df_raw)
+        else:
+            st.info("請選擇要分析的目標公司")
+
     
     def _create_share_table(self, df: pd.DataFrame, group_cols: List[str], name_col: str) -> pd.DataFrame:
         """創建份額分析表格"""
@@ -993,16 +985,15 @@ class ConstructionDashboard:
         comp_analyzer = CompetitorAnalyzer(df, rel, mep_vol_map)
         
         # 調整佈局，確保內容能拉寬
-        analysis_container = st.container()
-        with analysis_container:
-            if role == "建設公司":
-                self._render_developer_analysis(target, df, rel, analyzer, df_raw)
-            elif role == "營造公司":
-                self._render_contractor_analysis(target, df, rel, analyzer, df_raw)
-            elif role == "水電公司":
-                self._render_mep_analysis(target, df, rel, brand_rel, mep_vol_map, df_raw)
-            elif role == "經銷商":
-                self._render_dealer_analysis(target, df, rel, mep_vol_map, analyzer, comp_analyzer, df_raw)
+        # 不再使用 st.container 或 st.columns，讓內容直接佔滿寬度
+        if role == "建設公司":
+            self._render_developer_analysis(target, df, rel, analyzer, df_raw)
+        elif role == "營造公司":
+            self._render_contractor_analysis(target, df, rel, analyzer, df_raw)
+        elif role == "水電公司":
+            self._render_mep_analysis(target, df, rel, brand_rel, mep_vol_map, df_raw)
+        elif role == "經銷商":
+            self._render_dealer_analysis(target, df, rel, mep_vol_map, analyzer, comp_analyzer, df_raw)
     
     def _render_developer_analysis(self, target: str, df: pd.DataFrame, 
                                  rel: pd.DataFrame, analyzer: RelationshipAnalyzer, df_raw: pd.DataFrame):
@@ -1024,6 +1015,7 @@ class ConstructionDashboard:
             self._render_developer_overview(df_sel, rel_sel, analyzer)
         
         with tab_partners:
+            # 移除 st.columns，直接在主容器中顯示
             self._render_developer_visualizations(df_sel, rel_sel, analyzer)
         
         with tab_export:
@@ -1034,19 +1026,16 @@ class ConstructionDashboard:
         """渲染建設公司概覽"""
         UIComponents.render_section_header("合作夥伴概覽")
         
-        col1, col2 = st.columns(2)
+        # 移除 st.columns，讓表格直接佔滿寬度
+        st.markdown("**營造公司合作記錄**")
+        contractor_stats = self._create_share_table(df_sel, ["營造公司"], "營造公司")
+        contractor_stats = contractor_stats.rename(columns={"次數": "合作次數"})
+        UIComponents.render_dataframe_with_styling(contractor_stats)
         
-        with col1:
-            st.markdown("**營造公司合作記錄**")
-            contractor_stats = self._create_share_table(df_sel, ["營造公司"], "營造公司")
-            contractor_stats = contractor_stats.rename(columns={"次數": "合作次數"})
-            UIComponents.render_dataframe_with_styling(contractor_stats)
-        
-        with col2:
-            st.markdown("**水電公司合作記錄**")
-            mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
-            mep_stats = mep_stats.rename(columns={"次數": "合作次數"})
-            UIComponents.render_dataframe_with_styling(mep_stats)
+        st.markdown("**水電公司合作記錄**")
+        mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
+        mep_stats = mep_stats.rename(columns={"次數": "合作次數"})
+        UIComponents.render_dataframe_with_styling(mep_stats)
         
         st.markdown("**終端經銷商配比分析**")
         dealer_analysis = analyzer.avg_dealer_ratio_across_unique_mep(rel_sel)
@@ -1067,13 +1056,13 @@ class ConstructionDashboard:
     def _render_developer_visualizations(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame,
                                          analyzer: RelationshipAnalyzer):
         """渲染建設公司視覺化內容"""
-        chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="dev_chart")
+        chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="dev_chart_type")
         
         contractor_stats = self._create_share_table(df_sel, ["營造公司"], "營造公司")
         if not contractor_stats.empty:
             fig = ChartGenerator.create_chart(
                 contractor_stats, "營造公司", "次數", 
-                "建設公司 → 營造公司合作分析", chart_type
+                "建設公司 → 營造公司合作分析", chart_type, key_suffix="dev_con"
             )
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
@@ -1082,7 +1071,7 @@ class ConstructionDashboard:
         if not mep_stats.empty:
             fig = ChartGenerator.create_chart(
                 mep_stats, "水電公司", "次數",
-                "建設公司 → 水電公司合作分析", chart_type
+                "建設公司 → 水電公司合作分析", chart_type, key_suffix="dev_mep"
             )
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
@@ -1091,7 +1080,7 @@ class ConstructionDashboard:
         if not dealer_analysis.empty:
             fig = ChartGenerator.create_chart(
                 dealer_analysis, "經銷商", "平均配比",
-                "建設公司 → 經銷商配比分析", chart_type
+                "建設公司 → 經銷商配比分析", chart_type, key_suffix="dev_dealer"
             )
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
@@ -1100,7 +1089,7 @@ class ConstructionDashboard:
         if not brand_analysis.empty:
             fig = ChartGenerator.create_chart(
                 brand_analysis, "品牌", "加權平均配比",
-                "建設公司 → 線纜品牌配比分析（按使用量加權）", chart_type
+                "建設公司 → 線纜品牌配比分析（按使用量加權）", chart_type, key_suffix="dev_brand"
             )
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
@@ -1125,6 +1114,7 @@ class ConstructionDashboard:
             self._render_contractor_overview(df_sel, rel_sel, analyzer)
         
         with tab_partners:
+            # 移除 st.columns，直接在主容器中顯示
             self._render_contractor_visualizations(df_sel, rel_sel, analyzer)
         
         with tab_comp:
@@ -1138,20 +1128,17 @@ class ConstructionDashboard:
         """渲染營造公司概覽"""
         UIComponents.render_section_header("快速總覽")
         
-        col1, col2 = st.columns(2)
+        # 移除 st.columns，讓表格直接佔滿寬度
+        st.markdown("**上游建設公司**")
+        dev_stats = self._create_share_table(df_sel, ["建設公司"], "建設公司")
+        UIComponents.render_dataframe_with_styling(dev_stats)
         
-        with col1:
-            st.markdown("**上游建設公司**")
-            dev_stats = self._create_share_table(df_sel, ["建設公司"], "建設公司")
-            UIComponents.render_dataframe_with_styling(dev_stats)
+        st.markdown("**合作水電公司**")
+        mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
+        mep_stats = mep_stats.rename(columns={"次數": "合作次數"})
+        UIComponents.render_dataframe_with_styling(mep_stats)
         
-        with col2:
-            st.markdown("**合作水電公司**")
-            mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
-            mep_stats = mep_stats.rename(columns={"次數": "合作次數"})
-            UIComponents.render_dataframe_with_styling(mep_stats)
-        
-        st.markdown("**終端經銷商配比分析**")
+        st.markdown("**終端經銷商（平均配比｜按水電等權）**")
         dealer_analysis = analyzer.avg_dealer_ratio_across_unique_mep(rel_sel)
         if not dealer_analysis.empty:
             dealer_analysis["平均配比"] = dealer_analysis["平均配比"].apply(Formatters.pct_str)
@@ -1170,43 +1157,43 @@ class ConstructionDashboard:
     def _render_contractor_visualizations(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame,
                                           analyzer: RelationshipAnalyzer):
         """渲染營造公司視覺化內容"""
-        chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="con_chart")
+        chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="con_chart_type")
         
         dev_stats = self._create_share_table(df_sel, ["建設公司"], "建設公司")
         if not dev_stats.empty:
             fig = ChartGenerator.create_chart(
                 dev_stats, "建設公司", "次數", 
-                "營造公司 → 建設公司合作分析", chart_type
+                "營造公司 → 建設公司合作分析", chart_type, key_suffix="con_dev"
             )
             if fig:
-                st.plotly_chart(fig, use_container_width=True, key="con_dev_chart")
+                st.plotly_chart(fig, use_container_width=True)
         
         mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
         if not mep_stats.empty:
             fig = ChartGenerator.create_chart(
                 mep_stats, "水電公司", "次數",
-                "營造公司 → 水電公司合作分析", chart_type
+                "營造公司 → 水電公司合作分析", chart_type, key_suffix="con_mep"
             )
             if fig:
-                st.plotly_chart(fig, use_container_width=True, key="con_mep_chart")
+                st.plotly_chart(fig, use_container_width=True)
         
         dealer_analysis = analyzer.avg_dealer_ratio_across_unique_mep(rel_sel)
         if not dealer_analysis.empty:
             fig = ChartGenerator.create_chart(
                 dealer_analysis, "經銷商", "平均配比",
-                "營造公司 → 經銷商配比分析", chart_type
+                "營造公司 → 經銷商配比分析", chart_type, key_suffix="con_dealer"
             )
             if fig:
-                st.plotly_chart(fig, use_container_width=True, key="con_dealer_chart")
+                st.plotly_chart(fig, use_container_width=True)
         
         brand_analysis = analyzer.avg_brand_ratio_across_unique_mep(df_sel)
         if not brand_analysis.empty:
             fig = ChartGenerator.create_chart(
                 brand_analysis, "品牌", "加權平均配比",
-                "營造公司 → 線纜品牌配比分析（按使用量加權）", chart_type
+                "營造公司 → 線纜品牌配比分析（按使用量加權）", chart_type, key_suffix="con_brand"
             )
             if fig:
-                st.plotly_chart(fig, use_container_width=True, key="con_brand_chart")
+                st.plotly_chart(fig, use_container_width=True)
     
     def _render_contractor_competitors(self, target: str, df: pd.DataFrame):
         """渲染營造公司競爭者分析"""
@@ -1261,6 +1248,7 @@ class ConstructionDashboard:
         """渲染水電公司概覽"""
         UIComponents.render_section_header("合作對象與品牌")
         
+        # 移除 st.columns，讓表格直接佔滿寬度
         if not rel_sel.empty:
             dealer_ratio = (rel_sel.groupby("經銷商")["配比"].mean()
                             .reset_index().sort_values("配比", ascending=False))
@@ -1308,7 +1296,7 @@ class ConstructionDashboard:
     def _render_mep_visualizations(self, rel_sel: pd.DataFrame, brand_rel: pd.DataFrame, 
                                  target: str, vol_val: float):
         """渲染水電公司視覺化內容"""
-        chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="mep_chart")
+        chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="mep_chart_type")
         
         if not rel_sel.empty:
             dealer_ratio = (rel_sel.groupby("經銷商")["配比"].mean()
@@ -1318,10 +1306,10 @@ class ConstructionDashboard:
             
             fig = ChartGenerator.create_chart(
                 dealer_chart_data, "經銷商", "金額(萬)",
-                "水電公司 → 終端經銷商 金額(萬)", chart_type
+                "水電公司 → 終端經銷商 金額(萬)", chart_type, key_suffix="mep_dealer"
             )
             if fig:
-                st.plotly_chart(fig, use_container_width=True, key="mep_dealer_chart")
+                st.plotly_chart(fig, use_container_width=True)
         
         if not brand_rel.empty:
             brand_sel = brand_rel[brand_rel["水電公司"] == target]
@@ -1333,10 +1321,10 @@ class ConstructionDashboard:
                 
                 fig = ChartGenerator.create_chart(
                     brand_chart_data, "品牌", "金額(萬)",
-                    "水電公司 → 線纜品牌 金額(萬)", chart_type
+                    "水電公司 → 線纜品牌 金額(萬)", chart_type, key_suffix="mep_brand"
                 )
                 if fig:
-                    st.plotly_chart(fig, use_container_width=True, key="mep_brand_chart")
+                    st.plotly_chart(fig, use_container_width=True)
     
     def _render_mep_competitors(self, target: str, df: pd.DataFrame):
         """渲染水電公司競爭者分析"""
@@ -1399,21 +1387,18 @@ class ConstructionDashboard:
     
     def _render_dealer_visualizations(self, df_sel: pd.DataFrame):
         """渲染經銷商視覺化內容"""
-        col1, col2 = st.columns(2)
-        with col1:
-            chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="dealer_chart_type")
-        with col2:
-            top_n = st.selectbox("顯示前幾大", [5, 10, 15, 20, "全部"], index=0, key="dealer_top_n_select")
+        chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="dealer_chart_type")
+        top_n = st.selectbox("顯示前幾大", [5, 10, 15, 20, "全部"], index=0, key="dealer_top_n_select")
         
         mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
         if not mep_stats.empty:
             display_data = mep_stats.head(top_n) if top_n != "全部" else mep_stats
             fig = ChartGenerator.create_chart(
                 display_data, "水電公司", "次數",
-                f"經銷商 → 水電公司 合作次數 (前{top_n if top_n != '全部' else len(display_data)}大)", chart_type
+                f"經銷商 → 水電公司 合作次數 (前{top_n if top_n != '全部' else len(display_data)}大)", chart_type, key_suffix="dealer_mep"
             )
             if fig:
-                st.plotly_chart(fig, use_container_width=True, key="dealer_mep_chart")
+                st.plotly_chart(fig, use_container_width=True)
     
     def _render_dealer_competitors(self, target: str, rel: pd.DataFrame, mep_vol_map: Dict,
                                  analyzer: RelationshipAnalyzer, comp_analyzer: CompetitorAnalyzer):
@@ -1423,10 +1408,10 @@ class ConstructionDashboard:
         union_share, total_target = analyzer.union_overlap_share_and_total(target)
         comp_df, target_total_market = comp_analyzer.dealer_competitors(target)
         
-        col1, col2 = st.columns(2)
-        with col1:
+        cols = st.columns(2)
+        with cols[0]:
             st.metric("競爭覆蓋率（去重）", Formatters.pct_str(union_share))
-        with col2:
+        with cols[1]:
             st.metric("總市場額度(萬)", Formatters.fmt_amount(total_target))
         
         if comp_df.empty:
