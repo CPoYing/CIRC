@@ -25,7 +25,7 @@ warnings.filterwarnings('ignore')
 # ====================== Configuration ======================
 class Config:
     """Application configuration and constants"""
-    APP_TITLE = "百大建商｜關係鏈分析"
+    APP_TITLE = "百大建商｜關係鏈分析（單頁搜尋 v12 Enhanced）"
     VERSION = "v12 Enhanced"
     ROLES = ["建設公司", "營造公司", "水電公司", "經銷商"]
     CHART_TYPES = ["圓餅圖", "長條圖"]
@@ -174,7 +174,7 @@ class RelationshipAnalyzer:
         """Calculate union overlap share and total market for dealer"""
         target_clients = self.rel[self.rel["經銷商"] == target_dealer]["水電公司"].dropna().unique()
         tgt_ratio_map = (self.rel[self.rel["經銷商"] == target_dealer]
-                        .groupby("水電公司")["配比"].mean().to_dict())
+                         .groupby("水電公司")["配比"].mean().to_dict())
         
         total_target = 0.0
         union_overlap = 0.0
@@ -183,9 +183,9 @@ class RelationshipAnalyzer:
             vol = float(self.mep_vol_map.get(mep, 0.0) or 0.0)
             r_t = float(tgt_ratio_map.get(mep, 0.0) or 0.0)
             comp_sum = float((self.rel[self.rel["水電公司"] == mep]
-                            .groupby("經銷商")["配比"].mean()
-                            .drop(labels=[target_dealer], errors="ignore")
-                            .sum()) or 0.0)
+                              .groupby("經銷商")["配比"].mean()
+                              .drop(labels=[target_dealer], errors="ignore")
+                              .sum()) or 0.0)
             union_overlap += vol * min(r_t, comp_sum)
             total_target += vol * r_t
         
@@ -210,9 +210,9 @@ class CompetitorAnalyzer:
         
         candidates = g[g["營造公司"].isin(cons)]
         competitors = (candidates[candidates["水電公司"] != target_mep]
-                      .groupby("水電公司").size()
-                      .reset_index(name="共同出現次數")
-                      .sort_values("共同出現次數", ascending=False))
+                       .groupby("水電公司").size()
+                       .reset_index(name="共同出現次數")
+                       .sort_values("共同出現次數", ascending=False))
         
         return competitors
     
@@ -223,7 +223,7 @@ class CompetitorAnalyzer:
         target_total_clients = len(target_client_set)
         
         tgt_ratio_map = (self.rel[self.rel["經銷商"] == target_dealer]
-                        .groupby("水電公司")["配比"].mean().to_dict())
+                         .groupby("水電公司")["配比"].mean().to_dict())
         
         target_total_market = sum(
             float(self.mep_vol_map.get(mep, 0.0) or 0.0) * float(tgt_ratio_map.get(mep, 0.0) or 0.0)
@@ -289,8 +289,8 @@ class CompetitorAnalyzer:
             
         cat = pd.Categorical(df_result["威脅程度"], categories=["高", "中", "低"], ordered=True)
         df_result = (df_result.assign(_order=cat)
-                    .sort_values(["_order", "重疊市場占比", "共同客戶數"], ascending=[True, False, False])
-                    .drop(columns="_order"))
+                     .sort_values(["_order", "重疊市場占比", "共同客戶數"], ascending=[True, False, False])
+                     .drop(columns="_order"))
         
         return df_result, target_total_market
 
@@ -322,7 +322,7 @@ class ChartGenerator:
     
     @staticmethod
     def create_chart(df_plot: pd.DataFrame, name_col: str, value_col: str, 
-                    title: str, chart_type: str = "圓餅圖") -> go.Figure:
+                     title: str, chart_type: str = "圓餅圖") -> go.Figure:
         """Create enhanced charts with better styling"""
         if df_plot is None or df_plot.empty:
             return None
@@ -891,7 +891,7 @@ class ConstructionDashboard:
             st.info("所選地區暫無線纜品牌數據")
     
     def _render_analysis_settings(self, df: pd.DataFrame, rel: pd.DataFrame, 
-                                brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
+                                 brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
         """渲染分析設定區域"""
         
         col1, col2, col3 = st.columns([1, 2, 1])
@@ -937,7 +937,7 @@ class ConstructionDashboard:
             
             if search_term:
                 filtered_options = [opt for opt in options 
-                                  if search_term.lower() in str(opt).lower()]
+                                    if search_term.lower() in str(opt).lower()]
                 if not filtered_options:
                     st.warning(f"找不到包含 '{search_term}' 的公司")
                     filtered_options = options
@@ -985,7 +985,7 @@ class ConstructionDashboard:
         return cnt.sort_values("次數", ascending=False)
     
     def render_role_analysis(self, role: str, target: str, df: pd.DataFrame, 
-                           rel: pd.DataFrame, brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
+                             rel: pd.DataFrame, brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
         """Render analysis based on selected role"""
         analyzer = RelationshipAnalyzer(df, rel, brand_rel, mep_vol_map)
         comp_analyzer = CompetitorAnalyzer(df, rel, mep_vol_map)
@@ -1060,7 +1060,7 @@ class ConstructionDashboard:
             UIComponents.render_info_box("暫無品牌配比資料")
     
     def _render_developer_visualizations(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame,
-                                       analyzer: RelationshipAnalyzer):
+                                         analyzer: RelationshipAnalyzer):
         """Render developer visualizations"""
         chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="dev_chart")
         
@@ -1101,7 +1101,7 @@ class ConstructionDashboard:
                 st.plotly_chart(fig, use_container_width=True)
     
     def _render_contractor_analysis(self, target: str, df: pd.DataFrame, 
-                                  rel: pd.DataFrame, analyzer: RelationshipAnalyzer, df_raw: pd.DataFrame):
+                                 rel: pd.DataFrame, analyzer: RelationshipAnalyzer, df_raw: pd.DataFrame):
         """Render analysis for contractors"""
         df_sel = df[df["營造公司"] == target]
         rel_sel = rel[rel["營造公司"] == target]
@@ -1129,7 +1129,7 @@ class ConstructionDashboard:
             self._render_export_section(df_raw, df, rel, pd.DataFrame())
     
     def _render_contractor_overview(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame, 
-                                  analyzer: RelationshipAnalyzer):
+                                 analyzer: RelationshipAnalyzer):
         """Render contractor overview"""
         UIComponents.render_section_header("快速總覽")
         
@@ -1163,7 +1163,7 @@ class ConstructionDashboard:
             UIComponents.render_info_box("暫無品牌配比資料")
     
     def _render_contractor_visualizations(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame,
-                                        analyzer: RelationshipAnalyzer):
+                                          analyzer: RelationshipAnalyzer):
         """Render contractor visualizations"""
         chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="con_chart")
         
@@ -1214,14 +1214,14 @@ class ConstructionDashboard:
         
         candidates = df[df["建設公司"].isin(devs)]
         competitors = (candidates[candidates["營造公司"] != target]
-                      .groupby("營造公司").size()
-                      .reset_index(name="共同出現次數")
-                      .sort_values("共同出現次數", ascending=False))
+                       .groupby("營造公司").size()
+                       .reset_index(name="共同出現次數")
+                       .sort_values("共同出現次數", ascending=False))
         
         UIComponents.render_dataframe_with_styling(competitors, "競爭對手分析")
     
     def _render_mep_analysis(self, target: str, df: pd.DataFrame, rel: pd.DataFrame, 
-                           brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
+                             brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
         """Render analysis for MEP companies"""
         df_sel = df[df["水電公司"] == target]
         rel_sel = rel[rel["水電公司"] == target]
@@ -1252,13 +1252,13 @@ class ConstructionDashboard:
             self._render_export_section(df_raw, df, rel, brand_rel)
     
     def _render_mep_overview(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame, 
-                           brand_rel: pd.DataFrame, target: str, vol_val: float):
+                             brand_rel: pd.DataFrame, target: str, vol_val: float):
         """Render MEP overview"""
         UIComponents.render_section_header("合作對象與品牌")
         
         if not rel_sel.empty:
             dealer_ratio = (rel_sel.groupby("經銷商")["配比"].mean()
-                           .reset_index().sort_values("配比", ascending=False))
+                            .reset_index().sort_values("配比", ascending=False))
             dealer_ratio["額度_萬"] = dealer_ratio["配比"].astype(float) * vol_val
             
             dealer_display = dealer_ratio.copy()
@@ -1276,7 +1276,7 @@ class ConstructionDashboard:
             brand_sel = brand_rel[brand_rel["水電公司"] == target]
             if not brand_sel.empty:
                 brand_ratio = (brand_sel.groupby("品牌")["配比"].mean()
-                              .reset_index().sort_values("配比", ascending=False))
+                               .reset_index().sort_values("配比", ascending=False))
                 brand_ratio["額度_萬"] = brand_ratio["配比"].astype(float) * vol_val
                 
                 brand_display = brand_ratio.copy()
@@ -1307,7 +1307,7 @@ class ConstructionDashboard:
         
         if not rel_sel.empty:
             dealer_ratio = (rel_sel.groupby("經銷商")["配比"].mean()
-                           .reset_index().sort_values("配比", ascending=False))
+                            .reset_index().sort_values("配比", ascending=False))
             dealer_ratio["額度_萬"] = dealer_ratio["配比"].astype(float) * vol_val
             dealer_chart_data = dealer_ratio.rename(columns={"額度_萬": "金額(萬)"})
             
@@ -1322,7 +1322,7 @@ class ConstructionDashboard:
             brand_sel = brand_rel[brand_rel["水電公司"] == target]
             if not brand_sel.empty:
                 brand_ratio = (brand_sel.groupby("品牌")["配比"].mean()
-                              .reset_index().sort_values("配比", ascending=False))
+                               .reset_index().sort_values("配比", ascending=False))
                 brand_ratio["額度_萬"] = brand_ratio["配比"].astype(float) * vol_val
                 brand_chart_data = brand_ratio.rename(columns={"額度_萬": "金額(萬)"})
                 
@@ -1346,12 +1346,8 @@ class ConstructionDashboard:
             UIComponents.render_dataframe_with_styling(competitors, "競爭對手分析")
     
     def _render_dealer_analysis(self, target: str, df: pd.DataFrame, rel: pd.DataFrame,
-                              mep_vol_map: Dict, analyzer: RelationshipAnalyzer, 
-                              comp_analyzer: CompetitorAnalyzer, df_raw: pd.DataFrame):
-        """Render analysis for dealers"""
-    def _render_dealer_analysis(self, target: str, df: pd.DataFrame, rel: pd.DataFrame,
-                              mep_vol_map: Dict, analyzer: RelationshipAnalyzer, 
-                              comp_analyzer: CompetitorAnalyzer, df_raw: pd.DataFrame):
+                                 mep_vol_map: Dict, analyzer: RelationshipAnalyzer, 
+                                 comp_analyzer: CompetitorAnalyzer, df_raw: pd.DataFrame):
         """Render analysis for dealers"""
         df_sel = rel[rel["經銷商"] == target].merge(
             df, on=["建設公司", "營造公司", "水電公司"], how="left", suffixes=("", "_df")
@@ -1386,9 +1382,9 @@ class ConstructionDashboard:
         mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
         
         ratio_df = (rel[rel["經銷商"] == target]
-                   .groupby("水電公司")["配比"].mean()
-                   .reset_index()
-                   .rename(columns={"配比": "該經銷商配比"}))
+                    .groupby("水電公司")["配比"].mean()
+                    .reset_index()
+                    .rename(columns={"配比": "該經銷商配比"}))
         
         if not ratio_df.empty:
             ratio_df["該經銷商配比"] = ratio_df["該經銷商配比"].apply(Formatters.pct_str)
@@ -1435,7 +1431,7 @@ class ConstructionDashboard:
             st.caption("說明：表格中的「重疊市場占比」為與單一對手的配對式重疊（加總可能 >100%）；上方的「競爭覆蓋率（去重）」為所有對手合併後的覆蓋比例（不會超過 100%）。")
     
     def _render_export_section(self, df_raw: pd.DataFrame, df: pd.DataFrame, 
-                             rel: pd.DataFrame, brand_rel: pd.DataFrame):
+                               rel: pd.DataFrame, brand_rel: pd.DataFrame):
         """Render export section"""
         UIComponents.render_section_header("資料匯出")
         
