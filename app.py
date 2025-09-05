@@ -458,7 +458,7 @@ class UIComponents:
             
             st.dataframe(
                 df_styled, 
-                use_container_width=False,
+                use_container_width=True,  # 使用整個容器寬度
                 hide_index=True,
                 column_config=column_config
             )
@@ -859,6 +859,8 @@ class ConstructionDashboard:
                     if idx < len(brand_stats):
                         brand = brand_stats[idx]
                         with cols[j]:
+                            volume_wan = brand["加權年使用量_萬"]
+                            
                             # 使用自訂的 HTML 和 CSS 樣式
                             st.markdown(f"""
                             <div style="
@@ -874,7 +876,7 @@ class ConstructionDashboard:
                                 background-color: #f9f9f9;
                             ">
                                 <div style="font-size: 1.1rem; font-weight: bold; color: #333;">{brand['品牌']}</div>
-                                <div style="font-size: 2.5rem; font-weight: bold; color: #4CAF50; margin-top: 5px;">{brand["加權年使用量_萬"]:,.1f}萬</div>
+                                <div style="font-size: 2.5rem; font-weight: bold; color: #4CAF50; margin-top: 5px;">{volume_wan:,.1f}萬</div>
                                 <div style="font-size: 0.9rem; color: #666; margin-top: 10px;">
                                     市場佔比：{Formatters.pct_str(brand["市場占比"])}
                                 </div>
@@ -893,79 +895,85 @@ class ConstructionDashboard:
                                  brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
         """渲染分析設定區域"""
         
-        # 移除 st.columns，直接在主容器中顯示
-        st.markdown("**選擇分析角色**")
-        role_options = [
-            ("🏢 建設公司", "建設公司"),
-            ("🔨 營造公司", "營造公司"), 
-            ("⚡ 水電公司", "水電公司"),
-            ("🛒 經銷商", "經銷商")
-        ]
+        # 使用 columns 來限制選單寬度
+        col_selector, _ = st.columns([1, 3])
         
-        selected_role_display = st.selectbox(
-            "角色類型",
-            options=[display for display, _ in role_options],
-            help="選擇要分析的角色類型",
-            label_visibility="collapsed"
-        )
-        
-        role = next(actual for display, actual in role_options if display == selected_role_display)
-        
-        st.markdown("")
-        
-        st.markdown("**選擇目標公司**")
-        
-        if role == "建設公司":
-            options = sorted(df["建設公司"].dropna().unique())
-        elif role == "營造公司":
-            options = sorted(df["營造公司"].dropna().unique())
-        elif role == "水電公司":
-            options = sorted(df["水電公司"].dropna().unique())
-        else:
-            options = sorted(rel["經銷商"].dropna().unique())
-        
-        search_term = st.text_input(
-            "搜尋公司名稱", 
-            placeholder="輸入關鍵字過濾公司列表...",
-            help="支援模糊搜尋，輸入部分公司名稱即可",
-            label_visibility="collapsed"
-        )
-        
-        if search_term:
-            filtered_options = [opt for opt in options 
-                                if search_term.lower() in str(opt).lower()]
-            if not filtered_options:
-                st.warning(f"找不到包含 '{search_term}' 的公司")
-                filtered_options = options
-        else:
-            filtered_options = options
-        
-        if search_term and filtered_options:
-            st.caption(f"找到 {len(filtered_options)} 家公司")
-        
-        target = st.selectbox(
-            "目標公司", 
-            filtered_options,
-            help=f"從 {len(options)} 家{role}中選擇",
-            label_visibility="collapsed"
-        )
-    
-        if target:
-            st.success(f"準備分析：{role} - {target}")
+        with col_selector:
+            st.markdown("**選擇分析角色**")
+            role_options = [
+                ("🏢 建設公司", "建設公司"),
+                ("🔨 營造公司", "營造公司"), 
+                ("⚡ 水電公司", "水電公司"),
+                ("🛒 經銷商", "經銷商")
+            ]
             
-            # 修改按鈕名稱
-            if st.button(
-                "🚀 開始分析",
-                type="primary",
-                use_container_width=True
-            ):
-                st.markdown("---")
-                st.markdown("### 📈 分析結果")
-                
-                self.render_role_analysis(role, target, df, rel, brand_rel, mep_vol_map, df_raw)
-        else:
-            st.info("請選擇要分析的目標公司")
+            selected_role_display = st.selectbox(
+                "角色類型",
+                options=[display for display, _ in role_options],
+                help="選擇要分析的角色類型",
+                label_visibility="collapsed"
+            )
+            
+            role = next(actual for display, actual in role_options if display == selected_role_display)
+            
+            st.markdown("**選擇目標公司**")
+            
+            if role == "建設公司":
+                options = sorted(df["建設公司"].dropna().unique())
+            elif role == "營造公司":
+                options = sorted(df["營造公司"].dropna().unique())
+            elif role == "水電公司":
+                options = sorted(df["水電公司"].dropna().unique())
+            else:
+                options = sorted(rel["經銷商"].dropna().unique())
+            
+            search_term = st.text_input(
+                "搜尋公司名稱", 
+                placeholder="輸入關鍵字過濾公司列表...",
+                help="支援模糊搜尋，輸入部分公司名稱即可",
+                label_visibility="collapsed"
+            )
+            
+            if search_term:
+                filtered_options = [opt for opt in options 
+                                    if search_term.lower() in str(opt).lower()]
+                if not filtered_options:
+                    st.warning(f"找不到包含 '{search_term}' 的公司")
+                    filtered_options = options
+            else:
+                filtered_options = options
+            
+            if search_term and filtered_options:
+                st.caption(f"找到 {len(filtered_options)} 家公司")
+            
+            target = st.selectbox(
+                "目標公司", 
+                filtered_options,
+                help=f"從 {len(options)} 家{role}中選擇",
+                label_visibility="collapsed"
+            )
+        
+            # 將按鈕放在同一個窄欄位中
+            if target:
+                st.success(f"準備分析：{role} - {target}")
+                if st.button(
+                    "🚀 開始分析",
+                    type="primary",
+                    use_container_width=True
+                ):
+                    st.session_state.show_analysis = True
+                    st.session_state.analysis_role = role
+                    st.session_state.analysis_target = target
+            else:
+                st.info("請選擇要分析的目標公司")
 
+        # 分析結果顯示在主頁面寬版區塊
+        if "show_analysis" in st.session_state and st.session_state.show_analysis:
+            st.markdown("---")
+            st.markdown("### 📈 分析結果")
+            self.render_role_analysis(st.session_state.analysis_role, 
+                                      st.session_state.analysis_target, 
+                                      df, rel, brand_rel, mep_vol_map, df_raw)
     
     def _create_share_table(self, df: pd.DataFrame, group_cols: List[str], name_col: str) -> pd.DataFrame:
         """創建份額分析表格"""
@@ -984,8 +992,6 @@ class ConstructionDashboard:
         analyzer = RelationshipAnalyzer(df, rel, brand_rel, mep_vol_map)
         comp_analyzer = CompetitorAnalyzer(df, rel, mep_vol_map)
         
-        # 調整佈局，確保內容能拉寬
-        # 不再使用 st.container 或 st.columns，讓內容直接佔滿寬度
         if role == "建設公司":
             self._render_developer_analysis(target, df, rel, analyzer, df_raw)
         elif role == "營造公司":
@@ -1015,7 +1021,6 @@ class ConstructionDashboard:
             self._render_developer_overview(df_sel, rel_sel, analyzer)
         
         with tab_partners:
-            # 移除 st.columns，直接在主容器中顯示
             self._render_developer_visualizations(df_sel, rel_sel, analyzer)
         
         with tab_export:
@@ -1026,7 +1031,6 @@ class ConstructionDashboard:
         """渲染建設公司概覽"""
         UIComponents.render_section_header("合作夥伴概覽")
         
-        # 移除 st.columns，讓表格直接佔滿寬度
         st.markdown("**營造公司合作記錄**")
         contractor_stats = self._create_share_table(df_sel, ["營造公司"], "營造公司")
         contractor_stats = contractor_stats.rename(columns={"次數": "合作次數"})
@@ -1114,7 +1118,6 @@ class ConstructionDashboard:
             self._render_contractor_overview(df_sel, rel_sel, analyzer)
         
         with tab_partners:
-            # 移除 st.columns，直接在主容器中顯示
             self._render_contractor_visualizations(df_sel, rel_sel, analyzer)
         
         with tab_comp:
@@ -1128,7 +1131,6 @@ class ConstructionDashboard:
         """渲染營造公司概覽"""
         UIComponents.render_section_header("快速總覽")
         
-        # 移除 st.columns，讓表格直接佔滿寬度
         st.markdown("**上游建設公司**")
         dev_stats = self._create_share_table(df_sel, ["建設公司"], "建設公司")
         UIComponents.render_dataframe_with_styling(dev_stats)
@@ -1138,7 +1140,7 @@ class ConstructionDashboard:
         mep_stats = mep_stats.rename(columns={"次數": "合作次數"})
         UIComponents.render_dataframe_with_styling(mep_stats)
         
-        st.markdown("**終端經銷商（平均配比｜按水電等權）**")
+        st.markdown("**終端經銷商配比分析**")
         dealer_analysis = analyzer.avg_dealer_ratio_across_unique_mep(rel_sel)
         if not dealer_analysis.empty:
             dealer_analysis["平均配比"] = dealer_analysis["平均配比"].apply(Formatters.pct_str)
@@ -1248,7 +1250,6 @@ class ConstructionDashboard:
         """渲染水電公司概覽"""
         UIComponents.render_section_header("合作對象與品牌")
         
-        # 移除 st.columns，讓表格直接佔滿寬度
         if not rel_sel.empty:
             dealer_ratio = (rel_sel.groupby("經銷商")["配比"].mean()
                             .reset_index().sort_values("配比", ascending=False))
@@ -1449,6 +1450,12 @@ class ConstructionDashboard:
 # ====================== 應用程式進入點 ======================
 def main():
     """應用程式主要進入點"""
+    # 初始化 session state，用於控制分析結果的顯示
+    if 'show_analysis' not in st.session_state:
+        st.session_state.show_analysis = False
+        st.session_state.analysis_role = None
+        st.session_state.analysis_target = None
+        
     try:
         dashboard = ConstructionDashboard()
         dashboard.run()
