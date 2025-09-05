@@ -859,21 +859,31 @@ class ConstructionDashboard:
                     if idx < len(brand_stats):
                         brand = brand_stats[idx]
                         with cols[j]:
-                            # 使用streamlit原生metric
                             volume_wan = brand["加權年使用量_萬"]
-                            st.metric(
-                                label=brand["品牌"],
-                                value=f"{volume_wan:,.1f}萬",
-                                delta=f"{brand['合作水電數']:,}家水電",
-                            )
-                            # 在metric下方顯示占比
+                            
+                            # 使用自訂的 HTML 和 CSS 樣式
                             st.markdown(f"""
-                                <div style="text-align: center; color: #737373; font-size: 12px; margin-top: -10px;">
-                                    ({Formatters.pct_str(brand["市場占比"])})
+                            <div style="
+                                padding: 16px;
+                                border: 1px solid #e0e0e0;
+                                border-radius: 8px;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                                text-align: center;
+                                min-height: 150px;
+                                display: flex;
+                                flex-direction: column;
+                                justify-content: space-between;
+                                background-color: #f9f9f9;
+                            ">
+                                <div style="font-size: 1.1rem; font-weight: bold; color: #333;">{brand['品牌']}</div>
+                                <div style="font-size: 2.5rem; font-weight: bold; color: #4CAF50; margin-top: 5px;">{volume_wan:,.1f}萬</div>
+                                <div style="font-size: 0.9rem; color: #666; margin-top: 10px;">
+                                    市場佔比：{Formatters.pct_str(brand["市場占比"])}
                                 </div>
+                            </div>
                             """, unsafe_allow_html=True)
                             
-                            # 使用可展開區塊顯示詳細資訊
+                            # 恢復使用可展開區塊顯示詳細資訊
                             if brand['合作水電數'] > 0:
                                 with st.expander(f"查看合作水電 ({brand['合作水電數']:,})"):
                                     for detail in brand["mep_details"]:
@@ -1137,7 +1147,7 @@ class ConstructionDashboard:
             mep_stats = mep_stats.rename(columns={"次數": "合作次數"})
             UIComponents.render_dataframe_with_styling(mep_stats)
         
-        st.markdown("**終端經銷商（平均配比｜按水電等權）**")
+        st.markdown("**終端經銷商配比分析**")
         dealer_analysis = analyzer.avg_dealer_ratio_across_unique_mep(rel_sel)
         if not dealer_analysis.empty:
             dealer_analysis["平均配比"] = dealer_analysis["平均配比"].apply(Formatters.pct_str)
