@@ -655,13 +655,14 @@ class ConstructionDashboard:
                 st.write("• 經銷商：客戶分布、市場競爭分析")
             st.stop()
         
-        # 使用 session state 來儲存處理後的資料，避免每次互動都重複計算
-        if "df" not in st.session_state or st.session_state.uploaded_file_name != uploaded_file.name:
-            st.session_state.uploaded_file_name = uploaded_file.name
+        # 修正錯誤：將檔案名稱儲存到 session state 中
+        # 如果沒有 df 或上傳了新檔案，則處理資料
+        if "df" not in st.session_state or st.session_state.get("uploaded_file_name") != uploaded_file.name:
+            st.session_state.uploaded_file_name = uploaded_file.name # 在這裡先賦值
             with st.spinner("資料處理中，請稍候..."):
                 df_raw = self.read_file(uploaded_file)
                 st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map = self.process_data(df_raw)
-                st.session_state.df_raw = df_raw # 也儲存原始資料以供匯出
+                st.session_state.df_raw = df_raw
             st.success("資料處理完成！")
             st.experimental_rerun()
 
