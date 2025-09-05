@@ -25,7 +25,7 @@ warnings.filterwarnings('ignore')
 # ====================== 配置設定 ======================
 class Config:
     """應用程式配置和常數"""
-    APP_TITLE = "百大建商｜關係鏈分析（單頁搜尋 v12 Enhanced）"
+    APP_TITLE = "百大建商｜關係鏈分析"
     VERSION = "v12 Enhanced"
     ROLES = ["建設公司", "營造公司", "水電公司", "經銷商"]
     CHART_TYPES = ["圓餅圖", "長條圖"]
@@ -895,8 +895,8 @@ class ConstructionDashboard:
                                  brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
         """渲染分析設定區域"""
         
-        # 使用 columns 來限制選單寬度
-        col_selector, _ = st.columns([1, 3])
+        # 使用 columns 將篩選區塊置中
+        col_left, col_selector, col_right = st.columns([1, 2, 1])
         
         with col_selector:
             st.markdown("**選擇分析角色**")
@@ -953,9 +953,10 @@ class ConstructionDashboard:
                 label_visibility="collapsed"
             )
         
-            # 將按鈕放在同一個窄欄位中
             if target:
                 st.success(f"準備分析：{role} - {target}")
+                
+                # 將按鈕放在同一個窄欄位中
                 if st.button(
                     "🚀 開始分析",
                     type="primary",
