@@ -25,7 +25,7 @@ warnings.filterwarnings('ignore')
 # ====================== Configuration ======================
 class Config:
     """Application configuration and constants"""
-    APP_TITLE = "百大建商｜關係鏈分析（單頁搜尋 v12 Enhanced）"
+    APP_TITLE = "百大建商｜關係鏈分析"
     VERSION = "v12 Enhanced"
     ROLES = ["建設公司", "營造公司", "水電公司", "經銷商"]
     CHART_TYPES = ["圓餅圖", "長條圖"]
@@ -1400,20 +1400,19 @@ class ConstructionDashboard:
         """Render dealer visualizations"""
         col1, col2 = st.columns(2)
         with col1:
-            chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="dealer_chart")
+            chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="dealer_chart_type")
         with col2:
-            top_n = st.selectbox("顯示前幾大", [5, 10, 15, 20, "全部"], index=0, key="dealer_top_n")
+            top_n = st.selectbox("顯示前幾大", [5, 10, 15, 20, "全部"], index=0, key="dealer_top_n_select")
         
         mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
         if not mep_stats.empty:
-            if top_n != "全部":
-                mep_stats = mep_stats.head(top_n)
+            display_data = mep_stats.head(top_n) if top_n != "全部" else mep_stats
             fig = ChartGenerator.create_chart(
-                mep_stats, "水電公司", "次數",
-                f"經銷商 → 水電公司 合作次數 (前{top_n if top_n != '全部' else len(mep_stats)}大)", chart_type
+                display_data, "水電公司", "次數",
+                f"經銷商 → 水電公司 合作次數 (前{top_n if top_n != '全部' else len(display_data)}大)", chart_type
             )
             if fig:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="dealer_mep_chart")
     
     def _render_dealer_competitors(self, target: str, rel: pd.DataFrame, mep_vol_map: Dict,
                                  analyzer: RelationshipAnalyzer, comp_analyzer: CompetitorAnalyzer):
