@@ -13,12 +13,16 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union
 import warnings
+import json
+import requests
 
 import pandas as pd
 import numpy as np
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+import folium
+from streamlit_folium import st_folium
 
 warnings.filterwarnings('ignore')
 
@@ -656,13 +660,16 @@ class ConstructionDashboard:
         df_raw = self.read_file(uploaded_file)
         df, rel, brand_rel, mep_vol_map = self.process_data(df_raw)
         
-        tab_overview, tab_analysis = st.tabs(["📊 數據概覽", "🎯 分析設定"])
+        tab_overview, tab_analysis, tab_map = st.tabs(["📊 數據概覽", "🎯 分析設定", "🗺️ 地圖分析"])
         
         with tab_overview:
             self._render_overall_statistics(df, rel, brand_rel)
         
         with tab_analysis:
             self._render_analysis_settings(df, rel, brand_rel, mep_vol_map, df_raw)
+
+        with tab_map:
+            self._render_map_analysis(df)
     
     def _render_overall_statistics(self, df: pd.DataFrame, rel: pd.DataFrame, brand_rel: pd.DataFrame):
         """渲染整體統計數據"""
@@ -890,6 +897,206 @@ class ConstructionDashboard:
                                         st.markdown(detail, unsafe_allow_html=True)
         else:
             st.info("所選地區暫無線纜品牌數據")
+
+    def _render_map_analysis(self, df: pd.DataFrame):
+        """渲染地圖分析分頁"""
+        st.markdown("### 台灣各區主要品牌地圖分析")
+        
+        @st.cache_data
+        def load_geojson():
+            # 來源: g0v/twgeojson on GitHub
+            geojson_url = "https://raw.githubusercontent.com/g0v/twgeojson/master/json/twCounty2010.geo.json"
+            try:
+                response = requests.get(geojson_url, timeout=10)
+                return response.json()
+            except Exception as e:
+                st.error(f"無法載入 GeoJSON 檔案，請檢查網路連線或 URL：{e}")
+                return None
+        
+        @st.cache_data
+        def process_brand_data(_df):
+            """缓存品牌数据处理结果"""
+            # 处理資料以找出每個區域的主導品牌
+            brands_data = []
+            # 遍歷所有品牌及其佔比欄位，並將其轉換為長格式
+            for suffix in ['A', 'B', 'C']:
+                brand_col = f'品牌{suffix}'
+                ratio_col = f'品牌{suffix}比'
+                if brand_col in _df.columns and ratio_col in _df.columns:
+                    for _, row in _df.dropna(subset=[brand_col, ratio_col]).iterrows():
+                        brand_name = str(row[brand_col]).strip()
+                        ratio_val = float(row[ratio_col] or 0.0)
+                        
+                        # 過濾掉空值、0值和無效品牌名稱
+                        if (brand_name and 
+                            brand_name not in ['0', 'nan', 'None', ''] and 
+                            ratio_val > 0 and 
+                            pd.notna(row['縣市']) and 
+                            pd.notna(row['區域'])):
+                            
+                            brands_data.append({
+                                'city': str(row['縣市']).strip(),
+                                'area': str(row['區域']).strip(),
+                                'brand': brand_name,
+                                'ratio': ratio_val
+                            })
+            
+            df_brands = pd.DataFrame(brands_data)
+            
+            if df_brands.empty:
+                return None, None, None
+                
+            # 按縣市聚合品牌資料
+            city_brands = df_brands.groupby(['city', 'brand'])['ratio'].sum().reset_index()
+            
+            # 找到每個縣市最主要的品牌
+            idx = city_brands.groupby(['city'])['ratio'].idxmax()
+            df_dominant_brands = city_brands.loc[idx].reset_index(drop=True)
+            
+            # 計算每個縣市的總佔比，用於計算相對佔比
+            city_totals = df_brands.groupby('city')['ratio'].sum().reset_index()
+            city_totals.columns = ['city', 'total_ratio']
+            df_dominant_brands = df_dominant_brands.merge(city_totals, on='city')
+            df_dominant_brands['relative_ratio'] = df_dominant_brands['ratio'] / df_dominant_brands['total_ratio']
+            
+            # 創建每個縣市所有品牌的完整信息字典
+            city_all_brands = {}
+            for city in city_brands['city'].unique():
+                city_data = city_brands[city_brands['city'] == city]
+                total_city_ratio = city_data['ratio'].sum()
+                
+                # 計算每個品牌的相對佔比並排序
+                brands_info = []
+                for _, row in city_data.iterrows():
+                    relative_ratio = row['ratio'] / total_city_ratio
+                    brands_info.append({
+                        'brand': row['brand'],
+                        'ratio': relative_ratio,
+                        'ratio_pct': f"{relative_ratio * 100:.1f}%"
+                    })
+                
+                # 按佔比降序排列
+                brands_info.sort(key=lambda x: x['ratio'], reverse=True)
+                city_all_brands[city] = brands_info
+            
+            return df_brands, df_dominant_brands, city_all_brands
+        
+        # 加載地理數據
+        geojson_data = load_geojson()
+        if geojson_data is None:
+            return
+
+        # 處理品牌數據
+        df_brands, df_dominant_brands, city_all_brands = process_brand_data(df)
+        
+        if df_brands is None or df_dominant_brands is None or city_all_brands is None:
+            st.info("資料中沒有品牌資訊，無法產生地圖。")
+            return
+
+        # 準備 GeoJSON 數據，並為每個縣市添加「主導品牌」和「所有品牌」屬性
+        for feature in geojson_data['features']:
+            county_name = feature['properties'].get('COUNTYNAME', '')
+            feature['properties']['city_name'] = county_name
+            
+            # 標準化縣市名稱（處理桃園縣->桃園市等變化）
+            normalized_county = county_name.replace('縣', '市') if '縣' in county_name else county_name
+            
+            city_data = df_dominant_brands[
+                (df_dominant_brands['city'] == county_name) | 
+                (df_dominant_brands['city'] == normalized_county)
+            ]
+            
+            # 查找該縣市在 city_all_brands 中的數據
+            all_brands_info = None
+            for city_key in [county_name, normalized_county]:
+                if city_key in city_all_brands:
+                    all_brands_info = city_all_brands[city_key]
+                    break
+            
+            if not city_data.empty and all_brands_info:
+                brand_info = city_data.iloc[0]
+                feature['properties']['dominant_brand'] = brand_info['brand']
+                # 使用相對佔比，並確保格式正確
+                relative_pct = brand_info['relative_ratio'] * 100
+                feature['properties']['dominant_ratio'] = f"{relative_pct:.1f}%"
+                
+                # 添加所有品牌的詳細信息
+                brands_detail = []
+                for brand_item in all_brands_info:
+                    brands_detail.append(f"{brand_item['brand']}: {brand_item['ratio_pct']}")
+                feature['properties']['all_brands'] = "<br/>".join(brands_detail)
+                feature['properties']['brands_count'] = len(all_brands_info)
+            else:
+                feature['properties']['dominant_brand'] = "無資料"
+                feature['properties']['dominant_ratio'] = "N/A"
+                feature['properties']['all_brands'] = "無資料"
+                feature['properties']['brands_count'] = 0
+
+        # 設定品牌顏色映射
+        unique_brands = sorted(df_dominant_brands['brand'].unique().tolist())
+        color_palette = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98FB98', '#F4A261', '#2A9D8F', '#E76F51']
+        color_map = {}
+        for i, brand in enumerate(unique_brands):
+            color_map[brand] = color_palette[i % len(color_palette)]
+        color_map['無資料'] = '#CCCCCC'
+
+        # 創建 Folium 地圖
+        m = folium.Map(
+            location=[23.6, 120.9], 
+            zoom_start=7,
+            tiles='OpenStreetMap'
+        )
+
+        # 創建品牌到顏色的函數
+        def style_function(feature):
+            brand = feature['properties'].get('dominant_brand', '無資料')
+            return {
+                'fillColor': color_map.get(brand, '#CCCCCC'),
+                'color': 'black',
+                'weight': 1,
+                'fillOpacity': 0.7
+            }
+
+        # 添加區域圖層
+        folium.GeoJson(
+            geojson_data,
+            style_function=style_function,
+            tooltip=folium.GeoJsonTooltip(
+                fields=['COUNTYNAME', 'all_brands'],
+                aliases=['縣市', '品牌佔比'],
+                localize=True,
+                sticky=True,
+                labels=True,
+                style="""
+                    background-color: rgba(255, 255, 255, 0.95);
+                    border: 2px solid #333;
+                    border-radius: 8px;
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                    font-size: 13px;
+                    font-family: Arial, sans-serif;
+                    max-width: 280px;
+                    padding: 8px;
+                    line-height: 1.4;
+                """
+            )
+        ).add_to(m)
+
+        # 在 Streamlit 中顯示地圖
+        st_folium(
+            m, 
+            width=700, 
+            height=500,
+            returned_objects=["last_clicked_object"],
+            key=f"taiwan_brand_map_{id(df)}"  # 使用數據的id作為key，確保數據變化時重新渲染
+        )
+        
+        # 在地圖下方顯示品牌圖例
+        st.markdown("#### 品牌圖例")
+        if len(unique_brands) > 0:
+            legend_cols = st.columns(min(len(unique_brands), 6))  # 最多显示6列
+            for i, brand in enumerate(unique_brands):
+                with legend_cols[i % len(legend_cols)]:
+                    st.markdown(f"<span style='color: {color_map[brand]}; font-size: 20px;'>●</span> {brand}", unsafe_allow_html=True)
     
     def _render_analysis_settings(self, df: pd.DataFrame, rel: pd.DataFrame, 
                                  brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
@@ -1466,3 +1673,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
