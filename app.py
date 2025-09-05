@@ -1,3 +1,9 @@
+# app.py - 百大建商｜關係鏈分析（單頁搜尋 v12 Enhanced）
+"""
+進階建材供應鏈分析儀表板
+完整功能版本 - 確保所有修改都正確應用
+"""
+
 import io
 import re
 import math
@@ -746,11 +752,6 @@ class ConstructionDashboard:
                 areas = sorted([area for area in city_areas if area])
             # 多選區域
             selected_areas = st.multiselect("選擇區域", areas, key="area_filter")
-            
-            # 額外增加一個全選按鈕
-            if st.button("全選所有區域", key="select_all_areas"):
-                st.session_state.area_filter = areas
-                st.experimental_rerun()
         
         # 根據篩選條件過濾品牌數據
         filtered_brand_rel = brand_rel.copy()
@@ -786,7 +787,7 @@ class ConstructionDashboard:
             st.metric(display_title, f"{filtered_total_brands:,}")
         
         with col2:
-            st.metric("篩選金額總數", f"{filtered_total_amount:,.1f}萬")
+            st.metric("年使用量總額", f"{filtered_total_amount:,.1f}萬")
         
         with col3:
             # 顯示篩選條件
@@ -858,57 +859,23 @@ class ConstructionDashboard:
                     if idx < len(brand_stats):
                         brand = brand_stats[idx]
                         with cols[j]:
+                            # 使用streamlit原生metric
                             volume_wan = brand["加權年使用量_萬"]
-                            
-                            # 使用 CSS 樣式來實現並排顯示
+                            st.metric(
+                                label=brand["品牌"],
+                                value=f"{volume_wan:,.1f}萬",
+                                delta=f"{brand['合作水電數']:,}家水電",
+                            )
+                            # 在metric下方顯示占比
                             st.markdown(f"""
-                            <style>
-                                .metric-container {{
-                                    padding: 16px;
-                                    border: 1px solid #e0e0e0;
-                                    border-radius: 8px;
-                                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                                    text-align: center;
-                                    min-height: 150px;
-                                    display: flex;
-                                    flex-direction: column;
-                                    justify-content: space-between;
-                                    background-color: #f9f9f9;
-                                }}
-                                .metric-title {{
-                                    font-size: 1.1rem;
-                                    font-weight: bold;
-                                    color: #333;
-                                }}
-                                .metric-value {{
-                                    font-size: 2.5rem;
-                                    font-weight: bold;
-                                    color: #4CAF50;
-                                    margin-top: 5px;
-                                }}
-                                .metric-stats {{
-                                    display: flex;
-                                    justify-content: center;
-                                    align-items: center;
-                                    gap: 10px;
-                                    font-size: 0.9rem;
-                                    color: #666;
-                                    margin-top: 10px;
-                                }}
-                            </style>
-                            <div class="metric-container">
-                                <div class="metric-title">{brand['品牌']}</div>
-                                <div class="metric-value">{volume_wan:,.1f}萬</div>
-                                <div class="metric-stats">
-                                    <span>{brand['合作水電數']:,}家水電</span>
-                                    <span>({Formatters.pct_str(brand["市場占比"])})</span>
+                                <div style="text-align: center; color: #737373; font-size: 12px; margin-top: -10px;">
+                                    ({Formatters.pct_str(brand["市場占比"])})
                                 </div>
-                            </div>
                             """, unsafe_allow_html=True)
-
-                            # 使用按鈕來顯示詳細資訊
-                            if st.button(f"查看 {brand['品牌']} 合作水電", key=f"show_meps_{brand['品牌']}"):
-                                with st.expander(f"**{brand['品牌']}** 合作水電公司", expanded=True):
+                            
+                            # 使用可展開區塊顯示詳細資訊
+                            if brand['合作水電數'] > 0:
+                                with st.expander(f"查看合作水電 ({brand['合作水電數']:,})"):
                                     for detail in brand["mep_details"]:
                                         st.markdown(detail, unsafe_allow_html=True)
         else:
