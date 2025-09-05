@@ -360,7 +360,7 @@ class ChartGenerator:
                 )
             )
             
-        else:  # 圓餅圖
+        else:  # 餅圖
             fig = px.pie(
                 df_plot, names=name_col, values=value_col, title=title,
                 color=name_col, color_discrete_sequence=colors,
@@ -655,12 +655,14 @@ class ConstructionDashboard:
                 st.write("• 經銷商：客戶分布、市場競爭分析")
             st.stop()
         
-        # 使用 session state 來儲存處理後的資料，避免重複計算
-        if "df" not in st.session_state or st.session_state.uploaded_file != uploaded_file.name:
-            st.session_state.uploaded_file = uploaded_file.name
-            df_raw = self.read_file(uploaded_file)
-            st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map = self.process_data(df_raw)
-            st.session_state.df_raw = df_raw # 也儲存原始資料以供匯出
+        # 使用 session state 來儲存處理後的資料，避免每次互動都重複計算
+        if "df" not in st.session_state or st.session_state.uploaded_file_name != uploaded_file.name:
+            st.session_state.uploaded_file_name = uploaded_file.name
+            with st.spinner("資料處理中，請稍候..."):
+                df_raw = self.read_file(uploaded_file)
+                st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map = self.process_data(df_raw)
+                st.session_state.df_raw = df_raw # 也儲存原始資料以供匯出
+            st.success("資料處理完成！")
             st.experimental_rerun()
 
         # 當資料準備好後，顯示分頁
@@ -901,14 +903,15 @@ class ConstructionDashboard:
                                         st.markdown(detail, unsafe_allow_html=True)
         else:
             st.info("所選地區暫無線纜品牌數據")
-    
-    def _render_map_analysis(self, df):
+
+    def _render_map_analysis(self, df: pd.DataFrame):
         """渲染地圖分析分頁"""
         st.markdown("### 台灣各區主要品牌地圖分析")
         
         # 使用 @st.cache_data 載入 GeoJSON 檔案，避免每次互動都重新下載
         @st.cache_data
         def load_geojson():
+            # 來源: g0v/twgeojson on GitHub
             geojson_url = "https://raw.githubusercontent.com/g0v/twgeojson/master/json/twCounty2010.geo.json"
             try:
                 response = requests.get(geojson_url, timeout=10)
@@ -926,9 +929,9 @@ class ConstructionDashboard:
         col_mapping = {
             'city': '縣市',
             'area': '區域',
-            'brand_a': '品牌A', 'ratio_a': '經銷A比',
-            'brand_b': '品牌B', 'ratio_b': '經銷B比',
-            'brand_c': '品牌C', 'ratio_c': '經銷C比',
+            'brand_a': '品牌A', 'ratio_a': '品牌A佔比(%)',
+            'brand_b': '品牌B', 'ratio_b': '品牌B佔比(%)',
+            'brand_c': '品牌C', 'ratio_c': '品牌C佔比(%)',
         }
         
         brands_data = []
@@ -938,7 +941,7 @@ class ConstructionDashboard:
                 brand_col = col_mapping.get(brand_key)
                 ratio_col = col_mapping.get(ratio_key)
                 
-                if brand_col and ratio_col in row and pd.notna(row[brand_col]) and pd.notna(row[ratio_col]):
+                if brand_col in df.columns and ratio_col in df.columns and pd.notna(row[brand_col]) and pd.notna(row[ratio_col]):
                     brands_data.append({
                         'city': row.get(col_mapping['city']),
                         'area': row.get(col_mapping['area']),
@@ -958,8 +961,12 @@ class ConstructionDashboard:
         df_dominant_brands = df_brands.loc[idx].reset_index(drop=True)
 
         # 準備 GeoJSON 數據，並為每個區域添加「主導品牌」屬性
+        # 使用 .get() 方法安全地存取 GeoJSON 的屬性鍵
         for feature in geojson_data['features']:
-            full_name = feature['properties']['COUNTYNAME'] + feature['properties']['TOWNNAME']
+            county_name = feature['properties'].get('COUNTYNAME', '')
+            town_name = feature['properties'].get('TOWNNAME', '')
+            full_name = county_name + town_name
+            
             if full_name in df_dominant_brands['full_area_name'].values:
                 brand_info = df_dominant_brands[df_dominant_brands['full_area_name'] == full_name].iloc[0]
                 feature['properties']['dominant_brand'] = brand_info['brand']
@@ -1072,7 +1079,7 @@ class ConstructionDashboard:
             st.markdown("### 📈 分析結果")
             self.render_role_analysis(st.session_state.analysis_role, 
                                       st.session_state.analysis_target, 
-                                      df, rel, brand_rel, mep_vol_map, df_raw)
+                                      df, rel, brand_rel, st.session_state.mep_vol_map, st.session_state.df_raw)
     
     def _create_share_table(self, df: pd.DataFrame, group_cols: List[str], name_col: str) -> pd.DataFrame:
         """創建份額分析表格"""
