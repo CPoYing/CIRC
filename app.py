@@ -13,6 +13,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union
 import warnings
+import json
+import requests
 
 import pandas as pd
 import numpy as np
@@ -653,17 +655,26 @@ class ConstructionDashboard:
                 st.write("• 經銷商：客戶分布、市場競爭分析")
             st.stop()
         
-        df_raw = self.read_file(uploaded_file)
-        df, rel, brand_rel, mep_vol_map = self.process_data(df_raw)
-        
-        tab_overview, tab_analysis = st.tabs(["📊 數據概覽", "🎯 分析設定"])
+        # 使用 session state 來儲存處理後的資料，避免重複計算
+        if "df" not in st.session_state or st.session_state.uploaded_file != uploaded_file.name:
+            st.session_state.uploaded_file = uploaded_file.name
+            df_raw = self.read_file(uploaded_file)
+            st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map = self.process_data(df_raw)
+            st.session_state.df_raw = df_raw # 也儲存原始資料以供匯出
+            st.experimental_rerun()
+
+        # 當資料準備好後，顯示分頁
+        tab_overview, tab_analysis, tab_map = st.tabs(["📊 數據概覽", "🎯 分析設定", "🗺️ 地圖分析"])
         
         with tab_overview:
-            self._render_overall_statistics(df, rel, brand_rel)
+            self._render_overall_statistics(st.session_state.df, st.session_state.rel, st.session_state.brand_rel)
         
         with tab_analysis:
-            self._render_analysis_settings(df, rel, brand_rel, mep_vol_map, df_raw)
-    
+            self._render_analysis_settings(st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map, st.session_state.df_raw)
+
+        with tab_map:
+            self._render_map_analysis(st.session_state.df)
+
     def _render_overall_statistics(self, df: pd.DataFrame, rel: pd.DataFrame, brand_rel: pd.DataFrame):
         """渲染整體統計數據"""
         st.markdown("""
@@ -891,6 +902,95 @@ class ConstructionDashboard:
         else:
             st.info("所選地區暫無線纜品牌數據")
     
+    def _render_map_analysis(self, df):
+        """渲染地圖分析分頁"""
+        st.markdown("### 台灣各區主要品牌地圖分析")
+        
+        # 使用 @st.cache_data 載入 GeoJSON 檔案，避免每次互動都重新下載
+        @st.cache_data
+        def load_geojson():
+            geojson_url = "https://raw.githubusercontent.com/g0v/twgeojson/master/json/twCounty2010.geo.json"
+            try:
+                response = requests.get(geojson_url, timeout=10)
+                return response.json()
+            except Exception as e:
+                st.error(f"無法載入 GeoJSON 檔案，請檢查網路連線或 URL：{e}")
+                return None
+        
+        geojson_data = load_geojson()
+        
+        if geojson_data is None:
+            return
+
+        # 處理資料以找出每個區域的主導品牌
+        col_mapping = {
+            'city': '縣市',
+            'area': '區域',
+            'brand_a': '品牌A', 'ratio_a': '經銷A比',
+            'brand_b': '品牌B', 'ratio_b': '經銷B比',
+            'brand_c': '品牌C', 'ratio_c': '經銷C比',
+        }
+        
+        brands_data = []
+        for index, row in df.iterrows():
+            # 遍歷所有品牌及其佔比欄位
+            for brand_key, ratio_key in [('brand_a', 'ratio_a'), ('brand_b', 'ratio_b'), ('brand_c', 'ratio_c')]:
+                brand_col = col_mapping.get(brand_key)
+                ratio_col = col_mapping.get(ratio_key)
+                
+                if brand_col and ratio_col in row and pd.notna(row[brand_col]) and pd.notna(row[ratio_col]):
+                    brands_data.append({
+                        'city': row.get(col_mapping['city']),
+                        'area': row.get(col_mapping['area']),
+                        'brand': row[brand_col],
+                        'ratio': float(row[ratio_col])
+                    })
+        
+        df_brands = pd.DataFrame(brands_data)
+        
+        if df_brands.empty:
+            st.info("資料中沒有品牌資訊，無法產生地圖。")
+            return
+            
+        # 找到每個區域最主要的品牌
+        df_brands['full_area_name'] = df_brands['city'].astype(str) + df_brands['area'].astype(str)
+        idx = df_brands.groupby(['full_area_name'])['ratio'].idxmax()
+        df_dominant_brands = df_brands.loc[idx].reset_index(drop=True)
+
+        # 準備 GeoJSON 數據，並為每個區域添加「主導品牌」屬性
+        for feature in geojson_data['features']:
+            full_name = feature['properties']['COUNTYNAME'] + feature['properties']['TOWNNAME']
+            if full_name in df_dominant_brands['full_area_name'].values:
+                brand_info = df_dominant_brands[df_dominant_brands['full_area_name'] == full_name].iloc[0]
+                feature['properties']['dominant_brand'] = brand_info['brand']
+            else:
+                feature['properties']['dominant_brand'] = "無資料"
+
+        # 設定淺色調色盤
+        unique_brands = sorted(df_dominant_brands['brand'].unique().tolist())
+        color_palette = px.colors.qualitative.Pastel
+        color_map = {brand: color_palette[i % len(color_palette)] for i, brand in enumerate(unique_brands)}
+        color_map['無資料'] = '#e0e0e0' 
+
+        # 建立地圖
+        fig = px.choropleth_mapbox(
+            df_dominant_brands,
+            geojson=geojson_data,
+            locations='full_area_name',
+            featureidkey="properties.COUNTYNAME",
+            color='brand',
+            mapbox_style="carto-positron",
+            zoom=6.5,
+            center={"lat": 23.6, "lon": 120.9},
+            opacity=0.7,
+            color_discrete_map=color_map,
+            hover_data={'city': True, 'area': True, 'brand': True, 'full_area_name': False},
+            labels={'city': '縣市', 'area': '區域', 'brand': '最主要品牌'}
+        )
+        
+        fig.update_layout(title_text="台灣各區主要品牌地圖分析", title_x=0.5, margin={"r":0,"t":50,"l":0,"b":0})
+        st.plotly_chart(fig, use_container_width=True)
+
     def _render_analysis_settings(self, df: pd.DataFrame, rel: pd.DataFrame, 
                                  brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
         """渲染分析設定區域"""
@@ -956,7 +1056,6 @@ class ConstructionDashboard:
             if target:
                 st.success(f"準備分析：{role} - {target}")
                 
-                # 將按鈕放在同一個窄欄位中
                 if st.button(
                     "🚀 開始分析",
                     type="primary",
@@ -968,7 +1067,6 @@ class ConstructionDashboard:
             else:
                 st.info("請選擇要分析的目標公司")
 
-        # 分析結果顯示在主頁面寬版區塊
         if "show_analysis" in st.session_state and st.session_state.show_analysis:
             st.markdown("---")
             st.markdown("### 📈 分析結果")
@@ -1456,6 +1554,12 @@ def main():
         st.session_state.show_analysis = False
         st.session_state.analysis_role = None
         st.session_state.analysis_target = None
+        st.session_state.df = None
+        st.session_state.rel = None
+        st.session_state.brand_rel = None
+        st.session_state.mep_vol_map = None
+        st.session_state.df_raw = None
+        st.session_state.uploaded_file_name = None
         
     try:
         dashboard = ConstructionDashboard()
