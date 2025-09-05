@@ -21,6 +21,8 @@ import numpy as np
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+import folium
+from streamlit_folium import st_folium
 
 warnings.filterwarnings('ignore')
 
@@ -46,11 +48,11 @@ class Config:
         'dealer_c': (11, ["經銷商C", "經銷Ｃ", "經銷商3"]),
         'ratio_c': (12, ["經銷Ｃ佔比(%)", "經銷C佔比(%)", "經銷商C配比", "C配比"]),
         'brand_a': (13, ["品牌A", "線纜品牌A", "線纜品牌1", "品牌1"]),
-        'brand_ratio_a': (14, ["品牌A佔比(%)", "品牌A配比", "品牌1佔比", "A品牌佔比", "A品牌配比"]),
+        'brand_ratio_a': (14, ["品牌A佔比", "品牌A佔比(%)", "品牌A配比", "品牌1佔比", "A品牌佔比", "A品牌配比"]),
         'brand_b': (15, ["品牌B", "線纜品牌B", "線纜品牌2", "品牌2"]),
-        'brand_ratio_b': (16, ["品牌B佔比(%)", "品牌B配比", "品牌2佔比", "B品牌佔比", "B品牌配比"]),
+        'brand_ratio_b': (16, ["品牌B佔比", "品牌B佔比(%)", "品牌B配比", "品牌2佔比", "B品牌佔比", "B品牌配比"]),
         'brand_c': (17, ["品牌C", "線纜品牌C", "線纜品牌3", "品牌3"]),
-        'brand_ratio_c': (18, ["品牌C佔比(%)", "品牌C配比", "品牌3佔比", "C品牌佔比", "C品牌配比"]),
+        'brand_ratio_c': (18, ["品牌C佔比", "品牌C佔比(%)", "品牌C配比", "品牌3佔比", "C品牌佔比", "C品牌配比"]),
         'city': (19, ["縣市", "縣/市", "所在縣市"]),  # 水電公司所在縣市
         'area': (20, ["區域", "地區", "區/鄉鎮"])  # 水電公司所在區域
     }
@@ -360,7 +362,7 @@ class ChartGenerator:
                 )
             )
             
-        else:  # 圓餅圖
+        else:  # 餅圖
             fig = px.pie(
                 df_plot, names=name_col, values=value_col, title=title,
                 color=name_col, color_discrete_sequence=colors,
@@ -497,8 +499,10 @@ class ConstructionDashboard:
         """使用快取讀取上傳的檔案"""
         try:
             if file.name.lower().endswith(".csv"):
+                # 處理 CSV 檔案，以第一行為標頭
                 return pd.read_csv(file, encoding='utf-8')
             else:
+                # 處理 Excel 檔案
                 return pd.read_excel(file, engine="openpyxl")
         except UnicodeDecodeError:
             if file.name.lower().endswith(".csv"):
@@ -510,44 +514,51 @@ class ConstructionDashboard:
         processor = DataProcessor()
         
         columns = {}
+        # 遍歷你的COLUMN_MAPPING
         for key, (pos, names) in self.config.COLUMN_MAPPING.items():
-            columns[key] = processor.get_col_by_pos_or_name(df_raw, pos, names)
+            # 嘗試用名稱或位置尋找欄位
+            col_name = processor.get_col_by_pos_or_name(df_raw, pos, names)
+            if col_name:
+                columns[key] = col_name
         
-        required_cols = [columns['dev'], columns['con'], columns['mep']]
-        if any(col is None for col in required_cols):
+        required_cols_keys = ['dev', 'con', 'mep']
+        if not all(key in columns for key in required_cols_keys):
             st.error("找不到必要欄位（建設公司/營造公司/水電公司）。請確認資料格式。")
             st.stop()
         
-        rename_map = {
-            columns['dev']: "建設公司",
-            columns['con']: "營造公司", 
-            columns['mep']: "水電公司",
-            columns['vol']: "年使用量_萬",
-        }
-        
-        for suffix in ['a', 'b', 'c']:
-            dealer_key = f'dealer_{suffix}'
-            ratio_key = f'ratio_{suffix}'
-            brand_key = f'brand_{suffix}'
-            brand_ratio_key = f'brand_ratio_{suffix}'
-            
-            if columns.get(dealer_key):
-                rename_map[columns[dealer_key]] = f"經銷商{suffix.upper()}"
-            if columns.get(ratio_key):
-                rename_map[columns[ratio_key]] = f"經銷{suffix.upper()}比"
-            if columns.get(brand_key):
-                rename_map[columns[brand_key]] = f"品牌{suffix.upper()}"
-            if columns.get(brand_ratio_key):
-                rename_map[columns[brand_ratio_key]] = f"品牌{suffix.upper()}比"
-        
-        if columns.get('city'):
-            rename_map[columns['city']] = "縣市"
-        if columns.get('area'):
-            rename_map[columns['area']] = "區域"
+        rename_map = {}
+        for key, name in columns.items():
+            if key == 'dev':
+                rename_map[name] = "建設公司"
+            elif key == 'con':
+                rename_map[name] = "營造公司"
+            elif key == 'mep':
+                rename_map[name] = "水電公司"
+            elif key == 'vol':
+                rename_map[name] = "年使用量_萬"
+            elif key.startswith('dealer_'):
+                rename_map[name] = f"經銷商{key[-1].upper()}"
+            elif key.startswith('ratio_'):
+                rename_map[name] = f"經銷{key[-1].upper()}比"
+            elif key.startswith('brand_'):
+                if 'ratio' not in key:
+                    rename_map[name] = f"品牌{key[-1].upper()}"
+            elif key.startswith('brand_ratio_'):
+                rename_map[name] = f"品牌{key[-1].upper()}比"
+            elif key == 'city':
+                rename_map[name] = "縣市"
+            elif key == 'area':
+                rename_map[name] = "區域"
         
         df = df_raw.rename(columns=rename_map).copy()
         
-        text_cols = ["建設公司", "營造公司", "水電公司", "縣市", "區域"] + [f"經銷商{s}" for s in ['A','B','C']] + [f"品牌{s}" for s in ['A','B','C']]
+        text_cols = ["建設公司", "營造公司", "水電公司", "縣市", "區域"]
+        for suffix in ['A', 'B', 'C']:
+            if f"經銷商{suffix}" in df.columns:
+                text_cols.append(f"經銷商{suffix}")
+            if f"品牌{suffix}" in df.columns:
+                text_cols.append(f"品牌{suffix}")
+
         for col in text_cols:
             if col in df.columns:
                 df[col] = df[col].apply(processor.clean_name)
@@ -655,13 +666,16 @@ class ConstructionDashboard:
                 st.write("• 經銷商：客戶分布、市場競爭分析")
             st.stop()
         
-        # 使用 session state 來儲存處理後的資料，避免重複計算
-        if "df" not in st.session_state or st.session_state.uploaded_file != uploaded_file.name:
-            st.session_state.uploaded_file = uploaded_file.name
-            df_raw = self.read_file(uploaded_file)
-            st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map = self.process_data(df_raw)
-            st.session_state.df_raw = df_raw # 也儲存原始資料以供匯出
-            st.experimental_rerun()
+        # 修正錯誤：將檔案名稱儲存到 session state 中
+        # 如果沒有 df 或上傳了新檔案，則處理資料
+        if "df" not in st.session_state or st.session_state.get("uploaded_file_name") != uploaded_file.name:
+            st.session_state.uploaded_file_name = uploaded_file.name # 在這裡先賦值
+            with st.spinner("資料處理中，請稍候..."):
+                df_raw = self.read_file(uploaded_file)
+                st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map = self.process_data(df_raw)
+                st.session_state.df_raw = df_raw
+            st.success("資料處理完成！")
+            st.rerun()
 
         # 當資料準備好後，顯示分頁
         tab_overview, tab_analysis, tab_map = st.tabs(["📊 數據概覽", "🎯 分析設定", "🗺️ 地圖分析"])
@@ -901,14 +915,14 @@ class ConstructionDashboard:
                                         st.markdown(detail, unsafe_allow_html=True)
         else:
             st.info("所選地區暫無線纜品牌數據")
-    
-    def _render_map_analysis(self, df):
+
+    def _render_map_analysis(self, df: pd.DataFrame):
         """渲染地圖分析分頁"""
         st.markdown("### 台灣各區主要品牌地圖分析")
         
-        # 使用 @st.cache_data 載入 GeoJSON 檔案，避免每次互動都重新下載
         @st.cache_data
         def load_geojson():
+            # 來源: g0v/twgeojson on GitHub
             geojson_url = "https://raw.githubusercontent.com/g0v/twgeojson/master/json/twCounty2010.geo.json"
             try:
                 response = requests.get(geojson_url, timeout=10)
@@ -923,73 +937,131 @@ class ConstructionDashboard:
             return
 
         # 處理資料以找出每個區域的主導品牌
-        col_mapping = {
-            'city': '縣市',
-            'area': '區域',
-            'brand_a': '品牌A', 'ratio_a': '經銷A比',
-            'brand_b': '品牌B', 'ratio_b': '經銷B比',
-            'brand_c': '品牌C', 'ratio_c': '經銷C比',
-        }
-        
         brands_data = []
-        for index, row in df.iterrows():
-            # 遍歷所有品牌及其佔比欄位
-            for brand_key, ratio_key in [('brand_a', 'ratio_a'), ('brand_b', 'ratio_b'), ('brand_c', 'ratio_c')]:
-                brand_col = col_mapping.get(brand_key)
-                ratio_col = col_mapping.get(ratio_key)
-                
-                if brand_col and ratio_col in row and pd.notna(row[brand_col]) and pd.notna(row[ratio_col]):
-                    brands_data.append({
-                        'city': row.get(col_mapping['city']),
-                        'area': row.get(col_mapping['area']),
-                        'brand': row[brand_col],
-                        'ratio': float(row[ratio_col])
-                    })
-        
+        # 遍歷所有品牌及其佔比欄位，並將其轉換為長格式
+        for suffix in ['A', 'B', 'C']:
+            brand_col = f'品牌{suffix}'
+            ratio_col = f'品牌{suffix}佔比'
+            if brand_col in df.columns and ratio_col in df.columns:
+                for _, row in df.dropna(subset=[brand_col, ratio_col]).iterrows():
+                    brand_name = str(row[brand_col]).strip()
+                    ratio_val = float(row[ratio_col] or 0.0)
+                    
+                    # 過濾掉空值、0值和無效品牌名稱
+                    if (brand_name and 
+                        brand_name not in ['0', 'nan', 'None', ''] and 
+                        ratio_val > 0 and 
+                        pd.notna(row['縣市']) and 
+                        pd.notna(row['區域'])):
+                        
+                        brands_data.append({
+                            'city': str(row['縣市']).strip(),
+                            'area': str(row['區域']).strip(),
+                            'brand': brand_name,
+                            'ratio': ratio_val
+                        })
+
         df_brands = pd.DataFrame(brands_data)
         
         if df_brands.empty:
             st.info("資料中沒有品牌資訊，無法產生地圖。")
             return
             
-        # 找到每個區域最主要的品牌
-        df_brands['full_area_name'] = df_brands['city'].astype(str) + df_brands['area'].astype(str)
-        idx = df_brands.groupby(['full_area_name'])['ratio'].idxmax()
-        df_dominant_brands = df_brands.loc[idx].reset_index(drop=True)
+        # 按縣市聚合品牌資料，找到每個縣市最主要的品牌
+        city_brands = df_brands.groupby(['city', 'brand'])['ratio'].sum().reset_index()
+        idx = city_brands.groupby(['city'])['ratio'].idxmax()
+        df_dominant_brands = city_brands.loc[idx].reset_index(drop=True)
+        
+        # 計算每個縣市的總佔比，用於計算相對佔比
+        city_totals = df_brands.groupby('city')['ratio'].sum().reset_index()
+        city_totals.columns = ['city', 'total_ratio']
+        df_dominant_brands = df_dominant_brands.merge(city_totals, on='city')
+        df_dominant_brands['relative_ratio'] = df_dominant_brands['ratio'] / df_dominant_brands['total_ratio']
 
-        # 準備 GeoJSON 數據，並為每個區域添加「主導品牌」屬性
+        # 準備 GeoJSON 數據，並為每個縣市添加「主導品牌」屬性
         for feature in geojson_data['features']:
-            full_name = feature['properties']['COUNTYNAME'] + feature['properties']['TOWNNAME']
-            if full_name in df_dominant_brands['full_area_name'].values:
-                brand_info = df_dominant_brands[df_dominant_brands['full_area_name'] == full_name].iloc[0]
+            county_name = feature['properties'].get('COUNTYNAME', '')
+            feature['properties']['city_name'] = county_name
+            
+            # 標準化縣市名稱（處理桃園縣->桃園市等變化）
+            normalized_county = county_name.replace('縣', '市') if '縣' in county_name else county_name
+            
+            city_data = df_dominant_brands[
+                (df_dominant_brands['city'] == county_name) | 
+                (df_dominant_brands['city'] == normalized_county)
+            ]
+            
+            if not city_data.empty:
+                brand_info = city_data.iloc[0]
                 feature['properties']['dominant_brand'] = brand_info['brand']
+                # 使用相對佔比，並確保格式正確
+                relative_pct = brand_info['relative_ratio'] * 100
+                feature['properties']['dominant_ratio'] = f"{relative_pct:.1f}%"
             else:
                 feature['properties']['dominant_brand'] = "無資料"
+                feature['properties']['dominant_ratio'] = "N/A"
 
-        # 設定淺色調色盤
+        # 設定品牌顏色映射
         unique_brands = sorted(df_dominant_brands['brand'].unique().tolist())
-        color_palette = px.colors.qualitative.Pastel
-        color_map = {brand: color_palette[i % len(color_palette)] for i, brand in enumerate(unique_brands)}
-        color_map['無資料'] = '#e0e0e0' 
+        color_palette = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98FB98', '#F4A261', '#2A9D8F', '#E76F51']
+        color_map = {}
+        for i, brand in enumerate(unique_brands):
+            color_map[brand] = color_palette[i % len(color_palette)]
+        color_map['無資料'] = '#CCCCCC'
 
-        # 建立地圖
-        fig = px.choropleth_mapbox(
-            df_dominant_brands,
-            geojson=geojson_data,
-            locations='full_area_name',
-            featureidkey="properties.COUNTYNAME",
-            color='brand',
-            mapbox_style="carto-positron",
-            zoom=6.5,
-            center={"lat": 23.6, "lon": 120.9},
-            opacity=0.7,
-            color_discrete_map=color_map,
-            hover_data={'city': True, 'area': True, 'brand': True, 'full_area_name': False},
-            labels={'city': '縣市', 'area': '區域', 'brand': '最主要品牌'}
+        # 創建 Folium 地圖
+        # 台灣中心點座標
+        m = folium.Map(
+            location=[23.6, 120.9], 
+            zoom_start=7,
+            tiles='OpenStreetMap'
         )
+
+        # 創建品牌到顏色的函數
+        def style_function(feature):
+            brand = feature['properties'].get('dominant_brand', '無資料')
+            return {
+                'fillColor': color_map.get(brand, '#CCCCCC'),
+                'color': 'black',
+                'weight': 1,
+                'fillOpacity': 0.7
+            }
         
-        fig.update_layout(title_text="台灣各區主要品牌地圖分析", title_x=0.5, margin={"r":0,"t":50,"l":0,"b":0})
-        st.plotly_chart(fig, use_container_width=True)
+        # 創建彈窗內容函數
+        def popup_function(feature):
+            county = feature['properties'].get('COUNTYNAME', '')
+            town = feature['properties'].get('TOWNNAME', '')
+            brand = feature['properties'].get('dominant_brand', '無資料')
+            ratio = feature['properties'].get('dominant_ratio', 'N/A')
+            
+            return f"""
+            <div style='font-family: Arial; font-size: 12px;'>
+                <b>{county}{town}</b><br>
+                主要品牌: <b style='color: {color_map.get(brand, '#000000')};'>{brand}</b><br>
+                占比: {ratio}
+            </div>
+            """
+
+        # 添加區域圖層
+        folium.GeoJson(
+            geojson_data,
+            style_function=style_function,
+            tooltip=folium.GeoJsonTooltip(
+                fields=['COUNTYNAME', 'dominant_brand', 'dominant_ratio'],
+                aliases=['縣市', '主要品牌', '占比'],
+                localize=True
+            )
+        ).add_to(m)
+
+        # 在 Streamlit 中顯示地圖
+        map_data = st_folium(m, width=700, height=500)
+        
+        # 在地圖下方顯示品牌圖例
+        st.markdown("#### 品牌圖例")
+        legend_cols = st.columns(len(unique_brands))
+        for i, brand in enumerate(unique_brands):
+            with legend_cols[i % len(legend_cols)]:
+                st.markdown(f"<span style='color: {color_map[brand]}; font-size: 20px;'>●</span> {brand}", unsafe_allow_html=True)
 
     def _render_analysis_settings(self, df: pd.DataFrame, rel: pd.DataFrame, 
                                  brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
@@ -1072,7 +1144,7 @@ class ConstructionDashboard:
             st.markdown("### 📈 分析結果")
             self.render_role_analysis(st.session_state.analysis_role, 
                                       st.session_state.analysis_target, 
-                                      df, rel, brand_rel, mep_vol_map, df_raw)
+                                      df, rel, brand_rel, st.session_state.mep_vol_map, st.session_state.df_raw)
     
     def _create_share_table(self, df: pd.DataFrame, group_cols: List[str], name_col: str) -> pd.DataFrame:
         """創建份額分析表格"""
@@ -1570,4 +1642,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
