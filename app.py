@@ -497,8 +497,10 @@ class ConstructionDashboard:
         """使用快取讀取上傳的檔案"""
         try:
             if file.name.lower().endswith(".csv"):
+                # 處理 CSV 檔案，以第一行為標頭
                 return pd.read_csv(file, encoding='utf-8')
             else:
+                # 處理 Excel 檔案
                 return pd.read_excel(file, engine="openpyxl")
         except UnicodeDecodeError:
             if file.name.lower().endswith(".csv"):
@@ -510,44 +512,51 @@ class ConstructionDashboard:
         processor = DataProcessor()
         
         columns = {}
+        # 遍歷你的COLUMN_MAPPING
         for key, (pos, names) in self.config.COLUMN_MAPPING.items():
-            columns[key] = processor.get_col_by_pos_or_name(df_raw, pos, names)
+            # 嘗試用名稱或位置尋找欄位
+            col_name = processor.get_col_by_pos_or_name(df_raw, pos, names)
+            if col_name:
+                columns[key] = col_name
         
-        required_cols = [columns['dev'], columns['con'], columns['mep']]
-        if any(col is None for col in required_cols):
+        required_cols_keys = ['dev', 'con', 'mep']
+        if not all(key in columns for key in required_cols_keys):
             st.error("找不到必要欄位（建設公司/營造公司/水電公司）。請確認資料格式。")
             st.stop()
         
-        rename_map = {
-            columns['dev']: "建設公司",
-            columns['con']: "營造公司", 
-            columns['mep']: "水電公司",
-            columns['vol']: "年使用量_萬",
-        }
-        
-        for suffix in ['a', 'b', 'c']:
-            dealer_key = f'dealer_{suffix}'
-            ratio_key = f'ratio_{suffix}'
-            brand_key = f'brand_{suffix}'
-            brand_ratio_key = f'brand_ratio_{suffix}'
-            
-            if columns.get(dealer_key):
-                rename_map[columns[dealer_key]] = f"經銷商{suffix.upper()}"
-            if columns.get(ratio_key):
-                rename_map[columns[ratio_key]] = f"經銷{suffix.upper()}比"
-            if columns.get(brand_key):
-                rename_map[columns[brand_key]] = f"品牌{suffix.upper()}"
-            if columns.get(brand_ratio_key):
-                rename_map[columns[brand_ratio_key]] = f"品牌{suffix.upper()}比"
-        
-        if columns.get('city'):
-            rename_map[columns['city']] = "縣市"
-        if columns.get('area'):
-            rename_map[columns['area']] = "區域"
+        rename_map = {}
+        for key, name in columns.items():
+            if key == 'dev':
+                rename_map[name] = "建設公司"
+            elif key == 'con':
+                rename_map[name] = "營造公司"
+            elif key == 'mep':
+                rename_map[name] = "水電公司"
+            elif key == 'vol':
+                rename_map[name] = "年使用量_萬"
+            elif key.startswith('dealer_'):
+                rename_map[name] = f"經銷商{key[-1].upper()}"
+            elif key.startswith('ratio_'):
+                rename_map[name] = f"經銷{key[-1].upper()}比"
+            elif key.startswith('brand_'):
+                if 'ratio' not in key:
+                    rename_map[name] = f"品牌{key[-1].upper()}"
+            elif key.startswith('brand_ratio_'):
+                rename_map[name] = f"品牌{key[-1].upper()}比"
+            elif key == 'city':
+                rename_map[name] = "縣市"
+            elif key == 'area':
+                rename_map[name] = "區域"
         
         df = df_raw.rename(columns=rename_map).copy()
         
-        text_cols = ["建設公司", "營造公司", "水電公司", "縣市", "區域"] + [f"經銷商{s}" for s in ['A','B','C']] + [f"品牌{s}" for s in ['A','B','C']]
+        text_cols = ["建設公司", "營造公司", "水電公司", "縣市", "區域"]
+        for suffix in ['A', 'B', 'C']:
+            if f"經銷商{suffix}" in df.columns:
+                text_cols.append(f"經銷商{suffix}")
+            if f"品牌{suffix}" in df.columns:
+                text_cols.append(f"品牌{suffix}")
+
         for col in text_cols:
             if col in df.columns:
                 df[col] = df[col].apply(processor.clean_name)
@@ -664,7 +673,7 @@ class ConstructionDashboard:
                 st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map = self.process_data(df_raw)
                 st.session_state.df_raw = df_raw
             st.success("資料處理完成！")
-            st.rerun() # 使用新的 st.rerun()
+            st.rerun()
 
         # 當資料準備好後，顯示分頁
         tab_overview, tab_analysis, tab_map = st.tabs(["📊 數據概覽", "🎯 分析設定", "🗺️ 地圖分析"])
@@ -909,7 +918,6 @@ class ConstructionDashboard:
         """渲染地圖分析分頁"""
         st.markdown("### 台灣各區主要品牌地圖分析")
         
-        # 使用 @st.cache_data 載入 GeoJSON 檔案，避免每次互動都重新下載
         @st.cache_data
         def load_geojson():
             # 來源: g0v/twgeojson on GitHub
@@ -927,29 +935,21 @@ class ConstructionDashboard:
             return
 
         # 處理資料以找出每個區域的主導品牌
-        col_mapping = {
-            'city': '縣市',
-            'area': '區域',
-            'brand_a': '品牌A', 'ratio_a': '品牌A佔比(%)',
-            'brand_b': '品牌B', 'ratio_b': '品牌B佔比(%)',
-            'brand_c': '品牌C', 'ratio_c': '品牌C佔比(%)',
-        }
         
         brands_data = []
-        for index, row in df.iterrows():
-            # 遍歷所有品牌及其佔比欄位
-            for brand_key, ratio_key in [('brand_a', 'ratio_a'), ('brand_b', 'ratio_b'), ('brand_c', 'ratio_c')]:
-                brand_col = col_mapping.get(brand_key)
-                ratio_col = col_mapping.get(ratio_key)
-                
-                if brand_col in df.columns and ratio_col in df.columns and pd.notna(row[brand_col]) and pd.notna(row[ratio_col]):
+        # 遍歷所有品牌及其佔比欄位，並將其轉換為長格式
+        for suffix in ['A', 'B', 'C']:
+            brand_col = f'品牌{suffix}'
+            ratio_col = f'品牌{suffix}比'
+            if brand_col in df.columns and ratio_col in df.columns:
+                for _, row in df.dropna(subset=[brand_col, ratio_col]).iterrows():
                     brands_data.append({
-                        'city': row.get(col_mapping['city']),
-                        'area': row.get(col_mapping['area']),
+                        'city': row['縣市'],
+                        'area': row['區域'],
                         'brand': row[brand_col],
                         'ratio': float(row[ratio_col])
                     })
-        
+
         df_brands = pd.DataFrame(brands_data)
         
         if df_brands.empty:
@@ -962,7 +962,7 @@ class ConstructionDashboard:
         df_dominant_brands = df_brands.loc[idx].reset_index(drop=True)
 
         # 準備 GeoJSON 數據，並為每個區域添加「主導品牌」屬性
-        # 使用 .get() 方法安全地存取 GeoJSON 的屬性鍵
+        # 修正錯誤：安全地存取 GeoJSON 的屬性鍵
         for feature in geojson_data['features']:
             county_name = feature['properties'].get('COUNTYNAME', '')
             town_name = feature['properties'].get('TOWNNAME', '')
@@ -973,7 +973,7 @@ class ConstructionDashboard:
                 feature['properties']['dominant_brand'] = brand_info['brand']
             else:
                 feature['properties']['dominant_brand'] = "無資料"
-
+        
         # 設定淺色調色盤
         unique_brands = sorted(df_dominant_brands['brand'].unique().tolist())
         color_palette = px.colors.qualitative.Pastel
