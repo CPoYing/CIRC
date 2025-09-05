@@ -664,7 +664,7 @@ class ConstructionDashboard:
                 st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map = self.process_data(df_raw)
                 st.session_state.df_raw = df_raw
             st.success("資料處理完成！")
-            st.experimental_rerun()
+            st.rerun() # 使用新的 st.rerun()
 
         # 當資料準備好後，顯示分頁
         tab_overview, tab_analysis, tab_map = st.tabs(["📊 數據概覽", "🎯 分析設定", "🗺️ 地圖分析"])
