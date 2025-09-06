@@ -164,7 +164,7 @@ class RelationshipAnalyzer:
         if total_volume <= 0 or not brand_weighted_sums:
             return pd.DataFrame(columns=["品牌", "加權平均配比"])
         
-        rows = [(brand, weighted_sum / total_volume) 
+        rows = [(brand, weighted_sum / total_volume)
                 for brand, weighted_sum in brand_weighted_sums.items()]
         
         return (pd.DataFrame(rows, columns=["品牌", "加權平均配比"])
@@ -495,8 +495,10 @@ class ConstructionDashboard:
         """使用快取讀取上傳的檔案"""
         try:
             if file.name.lower().endswith(".csv"):
+                # 處理 CSV 檔案，以第一行為標頭
                 return pd.read_csv(file, encoding='utf-8')
             else:
+                # 處理 Excel 檔案
                 return pd.read_excel(file, engine="openpyxl")
         except UnicodeDecodeError:
             if file.name.lower().endswith(".csv"):
@@ -508,44 +510,51 @@ class ConstructionDashboard:
         processor = DataProcessor()
         
         columns = {}
+        # 遍歷你的COLUMN_MAPPING
         for key, (pos, names) in self.config.COLUMN_MAPPING.items():
-            columns[key] = processor.get_col_by_pos_or_name(df_raw, pos, names)
+            # 嘗試用名稱或位置尋找欄位
+            col_name = processor.get_col_by_pos_or_name(df_raw, pos, names)
+            if col_name:
+                columns[key] = col_name
         
-        required_cols = [columns['dev'], columns['con'], columns['mep']]
-        if any(col is None for col in required_cols):
+        required_cols_keys = ['dev', 'con', 'mep']
+        if not all(key in columns for key in required_cols_keys):
             st.error("找不到必要欄位（建設公司/營造公司/水電公司）。請確認資料格式。")
             st.stop()
         
-        rename_map = {
-            columns['dev']: "建設公司",
-            columns['con']: "營造公司", 
-            columns['mep']: "水電公司",
-            columns['vol']: "年使用量_萬",
-        }
-        
-        for suffix in ['a', 'b', 'c']:
-            dealer_key = f'dealer_{suffix}'
-            ratio_key = f'ratio_{suffix}'
-            brand_key = f'brand_{suffix}'
-            brand_ratio_key = f'brand_ratio_{suffix}'
-            
-            if columns.get(dealer_key):
-                rename_map[columns[dealer_key]] = f"經銷商{suffix.upper()}"
-            if columns.get(ratio_key):
-                rename_map[columns[ratio_key]] = f"經銷{suffix.upper()}比"
-            if columns.get(brand_key):
-                rename_map[columns[brand_key]] = f"品牌{suffix.upper()}"
-            if columns.get(brand_ratio_key):
-                rename_map[columns[brand_ratio_key]] = f"品牌{suffix.upper()}比"
-        
-        if columns.get('city'):
-            rename_map[columns['city']] = "縣市"
-        if columns.get('area'):
-            rename_map[columns['area']] = "區域"
+        rename_map = {}
+        for key, name in columns.items():
+            if key == 'dev':
+                rename_map[name] = "建設公司"
+            elif key == 'con':
+                rename_map[name] = "營造公司"
+            elif key == 'mep':
+                rename_map[name] = "水電公司"
+            elif key == 'vol':
+                rename_map[name] = "年使用量_萬"
+            elif key.startswith('dealer_'):
+                rename_map[name] = f"經銷商{key[-1].upper()}"
+            elif key.startswith('ratio_'):
+                rename_map[name] = f"經銷{key[-1].upper()}比"
+            elif key.startswith('brand_'):
+                if 'ratio' not in key:
+                    rename_map[name] = f"品牌{key[-1].upper()}"
+            elif key.startswith('brand_ratio_'):
+                rename_map[name] = f"品牌{key[-1].upper()}比"
+            elif key == 'city':
+                rename_map[name] = "縣市"
+            elif key == 'area':
+                rename_map[name] = "區域"
         
         df = df_raw.rename(columns=rename_map).copy()
         
-        text_cols = ["建設公司", "營造公司", "水電公司", "縣市", "區域"] + [f"經銷商{s}" for s in ['A','B','C']] + [f"品牌{s}" for s in ['A','B','C']]
+        text_cols = ["建設公司", "營造公司", "水電公司", "縣市", "區域"]
+        for suffix in ['A', 'B', 'C']:
+            if f"經銷商{suffix}" in df.columns:
+                text_cols.append(f"經銷商{suffix}")
+            if f"品牌{suffix}" in df.columns:
+                text_cols.append(f"品牌{suffix}")
+
         for col in text_cols:
             if col in df.columns:
                 df[col] = df[col].apply(processor.clean_name)
@@ -653,17 +662,25 @@ class ConstructionDashboard:
                 st.write("• 經銷商：客戶分布、市場競爭分析")
             st.stop()
         
-        df_raw = self.read_file(uploaded_file)
-        df, rel, brand_rel, mep_vol_map = self.process_data(df_raw)
-        
+        # 使用 session state 來儲存處理後的資料，避免每次互動都重複計算
+        if "df" not in st.session_state or st.session_state.get("uploaded_file_name") != uploaded_file.name:
+            st.session_state.uploaded_file_name = uploaded_file.name # 在這裡先賦值
+            with st.spinner("資料處理中，請稍候..."):
+                df_raw = self.read_file(uploaded_file)
+                st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map = self.process_data(df_raw)
+                st.session_state.df_raw = df_raw
+            st.success("資料處理完成！")
+            st.rerun()
+
+        # 當資料準備好後，顯示分頁
         tab_overview, tab_analysis = st.tabs(["📊 數據概覽", "🎯 分析設定"])
         
         with tab_overview:
-            self._render_overall_statistics(df, rel, brand_rel)
+            self._render_overall_statistics(st.session_state.df, st.session_state.rel, st.session_state.brand_rel)
         
         with tab_analysis:
-            self._render_analysis_settings(df, rel, brand_rel, mep_vol_map, df_raw)
-    
+            self._render_analysis_settings(st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map, st.session_state.df_raw)
+
     def _render_overall_statistics(self, df: pd.DataFrame, rel: pd.DataFrame, brand_rel: pd.DataFrame):
         """渲染整體統計數據"""
         st.markdown("""
@@ -890,7 +907,7 @@ class ConstructionDashboard:
                                         st.markdown(detail, unsafe_allow_html=True)
         else:
             st.info("所選地區暫無線纜品牌數據")
-    
+
     def _render_analysis_settings(self, df: pd.DataFrame, rel: pd.DataFrame, 
                                  brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
         """渲染分析設定區域"""
@@ -956,7 +973,6 @@ class ConstructionDashboard:
             if target:
                 st.success(f"準備分析：{role} - {target}")
                 
-                # 將按鈕放在同一個窄欄位中
                 if st.button(
                     "🚀 開始分析",
                     type="primary",
@@ -968,13 +984,12 @@ class ConstructionDashboard:
             else:
                 st.info("請選擇要分析的目標公司")
 
-        # 分析結果顯示在主頁面寬版區塊
         if "show_analysis" in st.session_state and st.session_state.show_analysis:
             st.markdown("---")
             st.markdown("### 📈 分析結果")
             self.render_role_analysis(st.session_state.analysis_role, 
                                       st.session_state.analysis_target, 
-                                      df, rel, brand_rel, mep_vol_map, df_raw)
+                                      df, rel, brand_rel, st.session_state.mep_vol_map, st.session_state.df_raw)
     
     def _create_share_table(self, df: pd.DataFrame, group_cols: List[str], name_col: str) -> pd.DataFrame:
         """創建份額分析表格"""
@@ -1386,6 +1401,24 @@ class ConstructionDashboard:
             mep_stats = mep_stats.merge(ratio_df, on="水電公司", how="left")
         
         UIComponents.render_dataframe_with_styling(mep_stats)
+
+        # 新增的分析功能：客戶掌握能力
+        st.markdown("---")
+        st.markdown("### 客戶掌握能力分析")
+        
+        # 確保 df_sel 中有 '縣市' 和 '區域' 欄位
+        if "縣市" in df_sel.columns and "區域" in df_sel.columns:
+            # 計算每個縣市/區域的獨特水電公司數量
+            client_by_location = df_sel.groupby(['縣市', '區域'])['水電公司'].nunique().reset_index(name='客戶家數')
+            
+            # 排序並顯示結果
+            if not client_by_location.empty:
+                client_by_location = client_by_location.sort_values('客戶家數', ascending=False)
+                UIComponents.render_dataframe_with_styling(client_by_location, "各區域客戶分佈")
+            else:
+                UIComponents.render_info_box("暫無按縣市/區域的客戶資料")
+        else:
+            UIComponents.render_info_box("缺少縣市或區域欄位，無法進行客戶掌握能力分析。")
     
     def _render_dealer_visualizations(self, df_sel: pd.DataFrame):
         """渲染經銷商視覺化內容"""
@@ -1447,7 +1480,7 @@ class ConstructionDashboard:
             file_name=f"construction_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
+    
 # ====================== 應用程式進入點 ======================
 def main():
     """應用程式主要進入點"""
@@ -1456,6 +1489,12 @@ def main():
         st.session_state.show_analysis = False
         st.session_state.analysis_role = None
         st.session_state.analysis_target = None
+        st.session_state.df = None
+        st.session_state.rel = None
+        st.session_state.brand_rel = None
+        st.session_state.mep_vol_map = None
+        st.session_state.df_raw = None
+        st.session_state.uploaded_file_name = None
         
     try:
         dashboard = ConstructionDashboard()
