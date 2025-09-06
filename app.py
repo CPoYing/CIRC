@@ -13,6 +13,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union
 import warnings
+import json
+import requests
 
 import pandas as pd
 import numpy as np
@@ -1309,6 +1311,107 @@ class ConstructionDashboard:
         )
         up_stats = self._create_share_table(combined_partners, ["_公司"], "公司")
         UIComponents.render_dataframe_with_styling(up_stats)
+    
+    def _render_dealer_analysis(self, target: str, df: pd.DataFrame, rel: pd.DataFrame,
+                                 mep_vol_map: Dict, analyzer: RelationshipAnalyzer, 
+                                 comp_analyzer: CompetitorAnalyzer, df_raw: pd.DataFrame):
+        """渲染經銷商的分析結果"""
+        df_sel = rel[rel["經銷商"] == target].merge(
+            df, on=["建設公司", "營造公司", "水電公司"], how="left", suffixes=("", "_df")
+        )
+        
+        stats = {
+            "資料筆數": len(df_sel),
+            "建設家數": df_sel["建設公司"].nunique(),
+            "營造家數": df_sel["營造公司"].nunique(),
+            "水電家數": df_sel["水電公司"].nunique()
+        }
+        UIComponents.render_kpi_section(stats)
+        
+        tab_overview, tab_partners, tab_comp, tab_export = st.tabs(["概覽", "合作對象視覺化", "競爭者", "資料匯出"])
+        
+        with tab_overview:
+            self._render_dealer_overview(df_sel, rel, target)
+        
+        with tab_partners:
+            self._render_dealer_visualizations(df_sel)
+        
+        with tab_comp:
+            self._render_dealer_competitors(target, rel, mep_vol_map, analyzer, comp_analyzer)
+            
+        with tab_export:
+            self._render_export_section(df_raw, df, rel, pd.DataFrame())
+    
+    def _render_dealer_overview(self, df_sel: pd.DataFrame, rel: pd.DataFrame, target: str):
+        """渲染經銷商概覽"""
+        UIComponents.render_section_header("合作水電")
+        
+        mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
+        
+        # 取得該經銷商的總客戶家數
+        total_mep_clients = df_sel["水電公司"].nunique()
+        
+        ratio_df = (rel[rel["經銷商"] == target]
+                    .groupby("水電公司")["配比"].mean()
+                    .reset_index()
+                    .rename(columns={"配比": "該經銷商配比"}))
+        
+        if not ratio_df.empty:
+            ratio_df["該經銷商配比"] = ratio_df["該經銷商配比"].apply(Formatters.pct_str)
+            mep_stats = mep_stats.merge(ratio_df, on="水電公司", how="left")
+        
+        UIComponents.render_dataframe_with_styling(mep_stats)
+
+        # 新增的分析功能：客戶掌握能力
+        st.markdown("---")
+        st.markdown("### 客戶掌握能力分析")
+        
+        # 篩選控制項
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # 縣市篩選
+            cities_dealer = sorted([city for city in df_sel["縣市"].dropna().unique() if city])
+            selected_city_dealer = st.selectbox("選擇縣市", ["全部"] + cities_dealer, key="dealer_city_filter")
+        
+        with col2:
+            # 區域篩選 - 根據選擇的縣市動態更新
+            if selected_city_dealer == "全部":
+                areas_dealer = sorted([area for area in df_sel["區域"].dropna().unique() if area])
+            else:
+                city_areas_dealer = df_sel[df_sel["縣市"] == selected_city_dealer]["區域"].dropna().unique()
+                areas_dealer = sorted([area for area in city_areas_dealer if area])
+            # 多選區域
+            selected_areas_dealer = st.multiselect("選擇區域", areas_dealer, key="dealer_area_filter")
+
+        # 根據篩選條件過濾資料
+        filtered_df_sel = df_sel.copy()
+        filter_info = []
+
+        if selected_city_dealer != "全部":
+            filtered_df_sel = filtered_df_sel[filtered_df_sel["縣市"] == selected_city_dealer]
+            filter_info.append(f"縣市: {selected_city_dealer}")
+
+        if selected_areas_dealer:
+            filtered_df_sel = filtered_df_sel[filtered_df_sel["區域"].isin(selected_areas_dealer)]
+            filter_info.append(f"區域: {', '.join(selected_areas_dealer)}")
+
+        # 計算每個縣市/區域的獨特水電公司數量
+        client_by_location = filtered_df_sel.groupby(['縣市', '區域'])['水電公司'].nunique().reset_index(name='客戶家數')
+        
+        # 計算佔比
+        if total_mep_clients > 0:
+            client_by_location['客戶家數佔比'] = client_by_location['客戶家數'] / total_mep_clients
+            client_by_location['客戶家數佔比'] = client_by_location['客戶家數佔比'].apply(Formatters.pct_str)
+        else:
+            client_by_location['客戶家數佔比'] = "0.00%"
+        
+        # 排序並顯示結果
+        if not client_by_location.empty:
+            client_by_location = client_by_location.sort_values('客戶家數', ascending=False).reset_index(drop=True)
+            UIComponents.render_dataframe_with_styling(client_by_location, "各區域客戶分佈")
+        else:
+            UIComponents.render_info_box("暫無按縣市/區域的客戶資料")
     
     def _render_dealer_visualizations(self, df_sel: pd.DataFrame):
         """渲染經銷商視覺化內容"""
