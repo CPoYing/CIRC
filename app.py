@@ -503,12 +503,13 @@ class ConstructionDashboard:
                 return pd.read_csv(file, encoding='gbk')
             raise
     
-    def process_data(self, df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict]:
+    @st.cache_data
+    def process_data(_self, df_raw: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict]:
         """將原始資料處理成可供分析的格式"""
         processor = DataProcessor()
         
         columns = {}
-        for key, (pos, names) in self.config.COLUMN_MAPPING.items():
+        for key, (pos, names) in _self.config.COLUMN_MAPPING.items():
             col_name = processor.get_col_by_pos_or_name(df_raw, pos, names)
             if col_name:
                 columns[key] = col_name
@@ -563,8 +564,8 @@ class ConstructionDashboard:
             if col in df.columns:
                 df[col] = processor.normalize_ratio(df[col])
         
-        rel = self._create_dealer_relations(df)
-        brand_rel = self._create_brand_relations(df)
+        rel = _self._create_dealer_relations(df)
+        brand_rel = _self._create_brand_relations(df)
         
         mep_vol_map = df.groupby("水電公司")["年使用量_萬"].apply(
             lambda s: s.dropna().iloc[0] if len(s.dropna()) > 0 else np.nan
@@ -792,32 +793,27 @@ class ConstructionDashboard:
             filtered_brand_rel = filtered_brand_rel[filtered_brand_rel["區域"].isin(selected_areas_all)]
             filter_info.append(f"區域: {', '.join(selected_areas_all)}")
         
-        # ---
-        # 顯示除錯資訊：這能幫助你確認篩選是否有效
-        # ---
-        st.write("---")
-        st.write("#### 偵錯資訊")
-        if has_city_col and selected_city_all != "全部":
-            st.write(f"在 {selected_city_all} 的品牌關聯筆數: {len(brand_rel[brand_rel['縣市'] == selected_city_all])}")
-        if has_area_col and selected_areas_all:
-            st.write(f"在 {selected_areas_all} 的品牌關聯筆數: {len(brand_rel[brand_rel['區域'].isin(selected_areas_all)])}")
+        st.markdown("---")
+        st.markdown("#### 偵錯資訊")
+        if has_city_col and not brand_rel.empty:
+            if selected_city_all != "全部":
+                st.write(f"在 {selected_city_all} 的品牌關聯筆數: {len(brand_rel[brand_rel['縣市'] == selected_city_all])}")
+            if selected_areas_all:
+                st.write(f"在 {selected_areas_all} 的品牌關聯筆數: {len(brand_rel[brand_rel['區域'].isin(selected_areas_all)])}")
         
         st.write(f"經過篩選後的品牌關聯筆數: **{len(filtered_brand_rel)}**")
         st.write(f"經過篩選後的主檔筆數: **{len(filtered_df)}**")
-        st.write("---")
+        st.markdown("---")
         
-        # 修正: 檢查 filtered_brand_rel 是否為空
         filtered_total_brands = filtered_brand_rel["品牌"].nunique() if not filtered_brand_rel.empty else 0
-        filtered_total_dealers = filtered_rel["經銷商"].nunique() if not filtered_rel.empty else 0
-
-        # 新增 KPI 卡片：品牌總數 & 經銷商總數
+        filtered_total_dealers = rel["經銷商"].nunique() if not rel.empty else 0
+        
         cols_kpi = st.columns(2)
         with cols_kpi[0]:
             st.metric("品牌總數", f"{filtered_total_brands:,}")
         with cols_kpi[1]:
             st.metric("經銷商總數", f"{filtered_total_dealers:,}")
 
-        # 計算篩選後的品牌總年使用量
         filtered_total_amount_brands = 0.0
         if not filtered_df.empty and "年使用量_萬" in filtered_df.columns:
             unique_meps = filtered_df["水電公司"].unique()
@@ -834,23 +830,27 @@ class ConstructionDashboard:
             st.info(f"篩選結果：共 {total_filtered_records:,} 筆品牌配比記錄")
             
             brand_stats = []
-            
             unique_brands = filtered_brand_rel["品牌"].unique()
             
-            brand_meps_df = filtered_brand_rel.groupby('品牌')['水電公司'].nunique().reset_index(name='合作水電數')
+            total_market_volume = 0.0
+            unique_meps_all_df = filtered_df["水電公司"].unique()
+            for mep in unique_meps_all_df:
+                mep_volume = filtered_df[filtered_df["水電公司"] == mep]["年使用量_萬"].dropna()
+                if not mep_volume.empty:
+                    total_market_volume += float(mep_volume.iloc[0])
             
-            for _, row in brand_meps_df.iterrows():
-                brand_name = row['品牌']
-                unique_meps_for_brand = filtered_brand_rel[filtered_brand_rel['品牌'] == brand_name]['水電公司'].unique()
+            for brand_name in unique_brands:
+                brand_data = filtered_brand_rel[filtered_brand_rel["品牌"] == brand_name]
+                unique_meps_for_brand = brand_data["水電公司"].unique()
                 
                 total_weighted_volume = 0.0
                 mep_details = []
                 
                 for mep in unique_meps_for_brand:
-                    mep_brand_data = filtered_brand_rel[(filtered_brand_rel['水電公司'] == mep) & (filtered_brand_rel['品牌'] == brand_name)]
+                    mep_brand_data = brand_data[brand_data["水電公司"] == mep]
                     avg_ratio = mep_brand_data["配比"].mean()
                     
-                    mep_volume = df[df["水電公司"] == mep]["年使用量_萬"].dropna()
+                    mep_volume = filtered_df[filtered_df["水電公司"] == mep]["年使用量_萬"].dropna()
                     volume = float(mep_volume.iloc[0]) if not mep_volume.empty else 0.0
                     
                     weighted_vol = volume * float(avg_ratio or 0.0)
@@ -858,7 +858,7 @@ class ConstructionDashboard:
                     total_weighted_volume += weighted_vol
                     mep_details.append(f"**{mep}**: {weighted_vol:,.1f}萬 ({Formatters.pct_str(avg_ratio)})")
                     
-                market_share = (total_weighted_volume / filtered_total_amount_brands) if filtered_total_amount_brands > 0 else 0.0
+                market_share = (total_weighted_volume / total_market_volume) if total_market_volume > 0 else 0.0
                 
                 brand_stats.append({
                     "品牌": brand_name,
@@ -916,7 +916,6 @@ class ConstructionDashboard:
         if has_area_col and selected_areas_all:
              filtered_rel = filtered_rel[filtered_rel["區域"].isin(selected_areas_all)]
         
-        # 計算經銷商數據 (使用前面共用的 filtered_rel)
         if not filtered_rel.empty:
             dealer_comp_stats = []
             
@@ -1072,7 +1071,7 @@ class ConstructionDashboard:
             st.markdown("### 📈 分析結果")
             self.render_role_analysis(st.session_state.analysis_role, 
                                      st.session_state.analysis_target, 
-                                     df, rel, brand_rel, st.session_state.mep_vol_map, st.session_state.df_raw)
+                                     df, rel, brand_rel, mep_vol_map, df_raw)
     
     def _create_share_table(self, df: pd.DataFrame, group_cols: List[str], name_col: str) -> pd.DataFrame:
         """創建份額分析表格"""
@@ -1090,21 +1089,24 @@ class ConstructionDashboard:
     def render_role_analysis(self, role: str, target: str, df: pd.DataFrame, 
                              rel: pd.DataFrame, brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
         """根據選擇的角色渲染分析結果"""
+        analyzer = RelationshipAnalyzer(df, rel, brand_rel, mep_vol_map)
+        comp_analyzer = CompetitorAnalyzer(df, rel, mep_vol_map)
+        
         if role == "建設公司":
-            self._render_developer_analysis(target, df, rel, df_raw)
+            self._render_developer_analysis(target, df, rel, brand_rel, analyzer, df_raw)
         elif role == "營造公司":
-            self._render_contractor_analysis(target, df, rel, df_raw)
+            self._render_contractor_analysis(target, df, rel, brand_rel, analyzer, df_raw)
         elif role == "水電公司":
             self._render_mep_analysis(target, df, rel, brand_rel, mep_vol_map, df_raw)
         elif role == "經銷商":
-            self._render_dealer_analysis(target, df, rel, mep_vol_map, df_raw)
+            self._render_dealer_analysis(target, df, rel, mep_vol_map, analyzer, comp_analyzer, df_raw)
 
     def _render_developer_analysis(self, target: str, df: pd.DataFrame, 
-                                   rel: pd.DataFrame, df_raw: pd.DataFrame):
+                                   rel: pd.DataFrame, brand_rel: pd.DataFrame, analyzer: RelationshipAnalyzer, df_raw: pd.DataFrame):
         """渲染建設公司的分析結果"""
         df_sel = df[df["建設公司"] == target]
         rel_sel = rel[rel["建設公司"] == target]
-        brand_rel_sel = st.session_state.brand_rel[st.session_state.brand_rel["建設公司"] == target]
+        brand_rel_sel = brand_rel[brand_rel["建設公司"] == target]
         
         if df_sel.empty:
             UIComponents.render_info_box(f"找不到 {target} 的資料。")
@@ -1121,15 +1123,15 @@ class ConstructionDashboard:
         tab_overview, tab_partners, tab_export = st.tabs(["概覽", "合作對象視覺化", "資料匯出"])
         
         with tab_overview:
-            self._render_developer_overview(df_sel, rel_sel, brand_rel_sel)
+            self._render_developer_overview(df_sel, rel_sel, brand_rel_sel, analyzer)
         
         with tab_partners:
-            self._render_developer_visualizations(df_sel, rel_sel, brand_rel_sel)
+            self._render_developer_visualizations(df_sel, rel_sel, brand_rel_sel, analyzer)
         
         with tab_export:
-            self._render_export_section(df_raw, df, rel, brand_rel_sel)
+            self._render_export_section(df_raw, df, rel, brand_rel)
     
-    def _render_developer_overview(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame, brand_rel_sel: pd.DataFrame):
+    def _render_developer_overview(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame, brand_rel_sel: pd.DataFrame, analyzer: RelationshipAnalyzer):
         """渲染建設公司概覽"""
         UIComponents.render_section_header("合作夥伴概覽")
         
@@ -1145,7 +1147,7 @@ class ConstructionDashboard:
         
         st.markdown("**終端經銷商配比分析**")
         if not rel_sel.empty:
-            dealer_analysis = RelationshipAnalyzer(st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map).avg_dealer_ratio_across_unique_mep(rel_sel)
+            dealer_analysis = analyzer.avg_dealer_ratio_across_unique_mep(rel_sel)
             if not dealer_analysis.empty:
                 dealer_analysis["平均配比"] = dealer_analysis["平均配比"].apply(Formatters.pct_str)
                 UIComponents.render_dataframe_with_styling(dealer_analysis)
@@ -1156,7 +1158,7 @@ class ConstructionDashboard:
         
         st.markdown("**線纜品牌配比分析（按使用量加權）**")
         if not brand_rel_sel.empty:
-            brand_analysis = RelationshipAnalyzer(st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map).avg_brand_ratio_across_unique_mep(df_sel)
+            brand_analysis = analyzer.avg_brand_ratio_across_unique_mep(df_sel)
             if not brand_analysis.empty:
                 brand_analysis["加權平均配比"] = brand_analysis["加權平均配比"].apply(Formatters.pct_str)
                 UIComponents.render_dataframe_with_styling(brand_analysis)
@@ -1165,7 +1167,7 @@ class ConstructionDashboard:
         else:
             UIComponents.render_info_box("暫無品牌配比資料")
     
-    def _render_developer_visualizations(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame, brand_rel_sel: pd.DataFrame):
+    def _render_developer_visualizations(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame, brand_rel_sel: pd.DataFrame, analyzer: RelationshipAnalyzer):
         """渲染建設公司視覺化內容"""
         chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="dev_chart_type")
         
@@ -1188,7 +1190,7 @@ class ConstructionDashboard:
                 st.plotly_chart(fig, use_container_width=True)
         
         if not rel_sel.empty:
-            dealer_analysis = RelationshipAnalyzer(st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map).avg_dealer_ratio_across_unique_mep(rel_sel)
+            dealer_analysis = analyzer.avg_dealer_ratio_across_unique_mep(rel_sel)
             if not dealer_analysis.empty:
                 fig = ChartGenerator.create_chart(
                     dealer_analysis, "經銷商", "平均配比",
@@ -1198,7 +1200,7 @@ class ConstructionDashboard:
                     st.plotly_chart(fig, use_container_width=True)
         
         if not brand_rel_sel.empty:
-            brand_analysis = RelationshipAnalyzer(st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map).avg_brand_ratio_across_unique_mep(df_sel)
+            brand_analysis = analyzer.avg_brand_ratio_across_unique_mep(df_sel)
             if not brand_analysis.empty:
                 fig = ChartGenerator.create_chart(
                     brand_analysis, "品牌", "加權平均配比",
@@ -1208,10 +1210,11 @@ class ConstructionDashboard:
                     st.plotly_chart(fig, use_container_width=True)
     
     def _render_contractor_analysis(self, target: str, df: pd.DataFrame, 
-                                  rel: pd.DataFrame, df_raw: pd.DataFrame):
+                                  rel: pd.DataFrame, brand_rel: pd.DataFrame, analyzer: RelationshipAnalyzer, df_raw: pd.DataFrame):
         """渲染營造公司的分析結果"""
         df_sel = df[df["營造公司"] == target]
         rel_sel = rel[rel["營造公司"] == target]
+        brand_rel_sel = brand_rel[brand_rel["營造公司"] == target]
         
         if df_sel.empty:
             UIComponents.render_info_box(f"找不到 {target} 的資料。")
@@ -1228,18 +1231,18 @@ class ConstructionDashboard:
         tab_overview, tab_partners, tab_comp, tab_export = st.tabs(["概覽", "合作對象視覺化", "競爭者", "資料匯出"])
         
         with tab_overview:
-            self._render_contractor_overview(df_sel, rel_sel)
+            self._render_contractor_overview(df_sel, rel_sel, brand_rel_sel, analyzer)
         
         with tab_partners:
-            self._render_contractor_visualizations(df_sel, rel_sel)
+            self._render_contractor_visualizations(df_sel, rel_sel, brand_rel_sel, analyzer)
         
         with tab_comp:
             self._render_contractor_competitors(target, df)
             
         with tab_export:
-            self._render_export_section(df_raw, df, rel, st.session_state.brand_rel)
+            self._render_export_section(df_raw, df, rel, brand_rel)
     
-    def _render_contractor_overview(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame):
+    def _render_contractor_overview(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame, brand_rel_sel: pd.DataFrame, analyzer: RelationshipAnalyzer):
         """渲染營造公司概覽"""
         UIComponents.render_section_header("快速總覽")
         
@@ -1254,7 +1257,7 @@ class ConstructionDashboard:
         
         st.markdown("**終端經銷商配比分析**")
         if not rel_sel.empty:
-            dealer_analysis = RelationshipAnalyzer(st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map).avg_dealer_ratio_across_unique_mep(rel_sel)
+            dealer_analysis = analyzer.avg_dealer_ratio_across_unique_mep(rel_sel)
             if not dealer_analysis.empty:
                 dealer_analysis["平均配比"] = dealer_analysis["平均配比"].apply(Formatters.pct_str)
                 UIComponents.render_dataframe_with_styling(dealer_analysis)
@@ -1264,14 +1267,17 @@ class ConstructionDashboard:
             UIComponents.render_info_box("暫無經銷商配比資料")
         
         st.markdown("**線纜品牌配比分析（按使用量加權）**")
-        brand_analysis = RelationshipAnalyzer(st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map).avg_brand_ratio_across_unique_mep(df_sel)
-        if not brand_analysis.empty:
-            brand_analysis["加權平均配比"] = brand_analysis["加權平均配比"].apply(Formatters.pct_str)
-            UIComponents.render_dataframe_with_styling(brand_analysis)
+        if not brand_rel_sel.empty:
+            brand_analysis = analyzer.avg_brand_ratio_across_unique_mep(df_sel)
+            if not brand_analysis.empty:
+                brand_analysis["加權平均配比"] = brand_analysis["加權平均配比"].apply(Formatters.pct_str)
+                UIComponents.render_dataframe_with_styling(brand_analysis)
+            else:
+                UIComponents.render_info_box("暫無品牌配比資料")
         else:
             UIComponents.render_info_box("暫無品牌配比資料")
     
-    def _render_contractor_visualizations(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame):
+    def _render_contractor_visualizations(self, df_sel: pd.DataFrame, rel_sel: pd.DataFrame, brand_rel_sel: pd.DataFrame, analyzer: RelationshipAnalyzer):
         """渲染營造公司視覺化內容"""
         chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="con_chart_type")
         
@@ -1294,7 +1300,7 @@ class ConstructionDashboard:
                 st.plotly_chart(fig, use_container_width=True)
         
         if not rel_sel.empty:
-            dealer_analysis = RelationshipAnalyzer(st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map).avg_dealer_ratio_across_unique_mep(rel_sel)
+            dealer_analysis = analyzer.avg_dealer_ratio_across_unique_mep(rel_sel)
             if not dealer_analysis.empty:
                 fig = ChartGenerator.create_chart(
                     dealer_analysis, "經銷商", "平均配比",
@@ -1303,19 +1309,20 @@ class ConstructionDashboard:
                 if fig:
                     st.plotly_chart(fig, use_container_width=True)
         
-        brand_analysis = RelationshipAnalyzer(st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map).avg_brand_ratio_across_unique_mep(df_sel)
-        if not brand_analysis.empty:
-            fig = ChartGenerator.create_chart(
-                brand_analysis, "品牌", "加權平均配比",
-                "營造公司 → 線纜品牌配比分析（按使用量加權）", chart_type, key_suffix="con_brand"
-            )
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
+        if not brand_rel_sel.empty:
+            brand_analysis = analyzer.avg_brand_ratio_across_unique_mep(df_sel)
+            if not brand_analysis.empty:
+                fig = ChartGenerator.create_chart(
+                    brand_analysis, "品牌", "加權平均配比",
+                    "營造公司 → 線纜品牌配比分析（按使用量加權）", chart_type, key_suffix="con_brand"
+                )
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
     
     def _render_contractor_competitors(self, target: str, df: pd.DataFrame):
         """渲染營造公司競爭者分析"""
         UIComponents.render_section_header("競爭者分析")
-        comp_analyzer = CompetitorAnalyzer(df, pd.DataFrame(), {}) # 不需要 rel 和 mep_vol_map
+        comp_analyzer = CompetitorAnalyzer(df, pd.DataFrame(), {}) 
         competitors = comp_analyzer.water_competitors(target)
         
         if competitors.empty:
@@ -1450,7 +1457,7 @@ class ConstructionDashboard:
             UIComponents.render_dataframe_with_styling(competitors, "競爭對手分析")
     
     def _render_dealer_analysis(self, target: str, df: pd.DataFrame, rel: pd.DataFrame,
-                                 mep_vol_map: Dict, df_raw: pd.DataFrame):
+                                 mep_vol_map: Dict, analyzer: RelationshipAnalyzer, comp_analyzer: CompetitorAnalyzer, df_raw: pd.DataFrame):
         """渲染經銷商的分析結果"""
         df_sel = rel[rel["經銷商"] == target].merge(
             df, on=["建設公司", "營造公司", "水電公司"], how="left", suffixes=("", "_df")
@@ -1477,8 +1484,6 @@ class ConstructionDashboard:
             self._render_dealer_visualizations(df_sel)
         
         with tab_comp:
-            analyzer = RelationshipAnalyzer(df, rel, st.session_state.brand_rel, mep_vol_map)
-            comp_analyzer = CompetitorAnalyzer(df, rel, mep_vol_map)
             self._render_dealer_competitors(target, rel, mep_vol_map, analyzer, comp_analyzer)
             
         with tab_export:
@@ -1612,7 +1617,6 @@ class ConstructionDashboard:
 # ====================== 應用程式進入點 ======================
 def main():
     """應用程式主要進入點"""
-    # 初始化 session state，用於控制分析結果的顯示
     if 'show_analysis' not in st.session_state:
         st.session_state.show_analysis = False
         st.session_state.analysis_role = None
@@ -1636,21 +1640,12 @@ if __name__ == "__main__":
 
 ---
 
-### 如何驗證與除錯
+### 下一步
 
-請你按照以下步驟來測試新的程式碼，我們將一起找出問題的確切原因：
+請你用這個新程式碼替換你的 `app.py` 檔案內容，然後再次運行應用程式。如果一切順利，程式應該能正常啟動。
 
-1.  用我提供的新程式碼覆蓋你原有的 `app.py` 檔案。
-2.  重新啟動應用程式 (`streamlit run app.py`)。
-3.  上傳你的原始檔案。
-4.  切換到「數據概覽」分頁。
-5.  在「市場數據概覽」中，先不要選擇任何縣市或區域，觀察畫面是否能顯示**所有**品牌的數據。
-6.  然後，選擇「台北市」。
-7.  觀察畫面中「偵錯資訊」區塊顯示的**篩選後的品牌關聯筆數**。
+當你在「數據概覽」分頁選擇篩選條件時，請特別留意「偵錯資訊」區塊。這將告訴你：
+* **在未篩選時，`brand_rel` 總共有多少筆資料。**
+* **當你選擇「台北市」後，`filtered_brand_rel` 還剩下多少筆資料。**
 
--   如果這個數字是 **0**，那麼問題很可能出在你的原始資料上。這意味著在你的檔案中，沒有任何一筆線纜品牌數據同時符合「縣市」欄位為「台北市」。
--   如果這個數字**大於 0**，但品牌數據卡片仍然沒有顯示，請告訴我確切的數字，這將幫助我進一步精準地定位問題。
-
-新的程式碼應該能更清楚地告訴你問題是出在資料本身，還是程式碼的篩選邏輯上。我深信，有了這些除錯資訊，我們一定能找到根本原因並解決它。
-
-請告訴我你測試後的結果，我會一直在這裡協助你。
+這將是我們解決問題的關鍵線索。如果你依然遇到問題，請將最新的錯誤訊息以及偵錯資訊的內容告訴我，我會根據這些資訊為你提供更精準的協助。
