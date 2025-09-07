@@ -512,33 +512,37 @@ class ConstructionDashboard:
             columns[key] = processor.get_col_by_pos_or_name(df_raw, pos, names)
         
         required_cols_keys = ['dev', 'con', 'mep']
+        # 額外檢查縣市和區域欄位是否存在
+        optional_cols_keys = ['city', 'area', 'vol']
+        
         if not all(key in columns for key in required_cols_keys):
             st.error("找不到必要欄位（建設公司/營造公司/水電公司）。請確認資料格式。")
             st.stop()
         
         rename_map = {}
         for key, name in columns.items():
-            if key == 'dev':
-                rename_map[name] = "建設公司"
-            elif key == 'con':
-                rename_map[name] = "營造公司"
-            elif key == 'mep':
-                rename_map[name] = "水電公司"
-            elif key == 'vol':
-                rename_map[name] = "年使用量_萬"
-            elif key.startswith('dealer_'):
-                rename_map[name] = f"經銷商{key[-1].upper()}"
-            elif key.startswith('ratio_'):
-                rename_map[name] = f"經銷{key[-1].upper()}比"
-            elif key.startswith('brand_'):
-                if 'ratio' not in key:
-                    rename_map[name] = f"品牌{key[-1].upper()}"
-            elif key.startswith('brand_ratio_'):
-                rename_map[name] = f"品牌{key[-1].upper()}比"
-            elif key == 'city':
-                rename_map[name] = "縣市"
-            elif key == 'area':
-                rename_map[name] = "區域"
+            if name: # 只處理存在的欄位
+                if key == 'dev':
+                    rename_map[name] = "建設公司"
+                elif key == 'con':
+                    rename_map[name] = "營造公司"
+                elif key == 'mep':
+                    rename_map[name] = "水電公司"
+                elif key == 'vol':
+                    rename_map[name] = "年使用量_萬"
+                elif key.startswith('dealer_'):
+                    rename_map[name] = f"經銷商{key[-1].upper()}"
+                elif key.startswith('ratio_'):
+                    rename_map[name] = f"經銷{key[-1].upper()}比"
+                elif key.startswith('brand_'):
+                    if 'ratio' not in key:
+                        rename_map[name] = f"品牌{key[-1].upper()}"
+                elif key.startswith('brand_ratio_'):
+                    rename_map[name] = f"品牌{key[-1].upper()}比"
+                elif key == 'city':
+                    rename_map[name] = "縣市"
+                elif key == 'area':
+                    rename_map[name] = "區域"
         
         df = df_raw.rename(columns=rename_map).copy()
         
@@ -750,50 +754,63 @@ class ConstructionDashboard:
 
         col1, col2 = st.columns(2)
         
-        with col1:
-            # 確保篩選器選項是唯一的，並排序
+        has_city_col = "縣市" in df.columns
+        has_area_col = "區域" in df.columns
+        
+        if has_city_col:
             cities_all = sorted([city for city in df["縣市"].dropna().unique() if city])
             selected_city_all = st.selectbox("選擇縣市", ["全部"] + cities_all, key="all_city_filter")
-        
-        with col2:
+        else:
+            selected_city_all = "全部"
+            st.info("資料中未找到「縣市」欄位，無法進行縣市篩選。")
+
+        if has_area_col:
             areas_all = []
             if selected_city_all == "全部":
                 areas_all = sorted([area for area in df["區域"].dropna().unique() if area])
             else:
                 city_areas_all = df[df["縣市"] == selected_city_all]["區域"].dropna().unique()
                 areas_all = sorted([area for area in city_areas_all if area])
-            
-            # 使用多選框，並預設為空列表
             selected_areas_all = st.multiselect("選擇區域", areas_all, default=[], key="all_area_filter")
-        
+        else:
+            selected_areas_all = []
+            st.info("資料中未找到「區域」欄位，無法進行區域篩選。")
+
         # 根據篩選條件過濾所有相關資料
-        # ---
-        # 修正: 篩選邏輯優化，避免因篩選條件過濾掉所有資料
-        # ---
         filtered_df = df.copy()
         filtered_brand_rel = brand_rel.copy()
         filtered_rel = rel.copy()
         
         filter_info = []
         
-        if selected_city_all != "全部":
-            filtered_df = filtered_df[filtered_df["縣市"] == selected_city_all]
-            # 使用 .isin() 方法來處理縣市的篩選
-            filtered_brand_rel = filtered_brand_rel[filtered_brand_rel["縣市"] == selected_city_all]
-            filtered_rel = filtered_rel[filtered_rel["縣市"] == selected_city_all]
+        if has_city_col and selected_city_all != "全部":
+            # 修正: 確保篩選欄位存在
+            if "縣市" in filtered_df.columns:
+                filtered_df = filtered_df[filtered_df["縣市"] == selected_city_all]
+            if "縣市" in filtered_brand_rel.columns:
+                filtered_brand_rel = filtered_brand_rel[filtered_brand_rel["縣市"] == selected_city_all]
+            if "縣市" in filtered_rel.columns:
+                filtered_rel = filtered_rel[filtered_rel["縣市"] == selected_city_all]
             filter_info.append(f"縣市: {selected_city_all}")
         
-        if selected_areas_all:
-            # 使用 .isin() 方法來處理多選的區域篩選
-            filtered_df = filtered_df[filtered_df["區域"].isin(selected_areas_all)]
-            filtered_brand_rel = filtered_brand_rel[filtered_brand_rel["區域"].isin(selected_areas_all)]
-            filtered_rel = filtered_rel[filtered_rel["區域"].isin(selected_areas_all)]
+        if has_area_col and selected_areas_all:
+            # 修正: 確保篩選欄位存在
+            if "區域" in filtered_df.columns:
+                filtered_df = filtered_df[filtered_df["區域"].isin(selected_areas_all)]
+            if "區域" in filtered_brand_rel.columns:
+                filtered_brand_rel = filtered_brand_rel[filtered_brand_rel["區域"].isin(selected_areas_all)]
+            if "區域" in filtered_rel.columns:
+                filtered_rel = filtered_rel[filtered_rel["區域"].isin(selected_areas_all)]
             filter_info.append(f"區域: {', '.join(selected_areas_all)}")
         
         if filter_info:
             st.info(f"已篩選: {', '.join(filter_info)}")
         else:
             st.info("顯示全部地區數據")
+
+        # 新增除錯資訊
+        st.caption(f"篩選前的品牌關係筆數: {len(brand_rel)}")
+        st.caption(f"篩選後的品牌關係筆數: {len(filtered_brand_rel)}")
 
         # ==================== 線纜品牌數據分析 ====================
         st.markdown("---")
@@ -812,11 +829,7 @@ class ConstructionDashboard:
 
         # 計算篩選後的品牌總年使用量
         filtered_total_amount_brands = 0.0
-        # ---
-        # 修正: 優化總額計算邏輯，避免重複計算
-        # ---
         if not filtered_df.empty and "年使用量_萬" in filtered_df.columns:
-            # 確保只計算過濾後的不重複水電公司的年用量
             unique_meps = filtered_df["水電公司"].unique()
             for mep in unique_meps:
                 mep_volume = filtered_df[filtered_df["水電公司"] == mep]["年使用量_萬"].dropna().iloc[0]
@@ -831,11 +844,8 @@ class ConstructionDashboard:
             st.info(f"篩選結果：共 {total_filtered_records:,} 筆品牌配比記錄")
             
             brand_stats = []
-            
-            # 取得所有品牌的唯一名稱
             unique_brands = filtered_brand_rel["品牌"].unique()
             
-            # 計算每個品牌的統計數據
             for brand_name in unique_brands:
                 brand_data = filtered_brand_rel[filtered_brand_rel["品牌"] == brand_name]
                 unique_meps_for_brand = brand_data["水電公司"].unique()
@@ -847,7 +857,6 @@ class ConstructionDashboard:
                     mep_brand_data = brand_data[brand_data["水電公司"] == mep]
                     avg_ratio = mep_brand_data["配比"].mean()
                     
-                    # 使用 filtered_df 來獲取年使用量
                     mep_volume = filtered_df.loc[filtered_df["水電公司"] == mep, "年使用量_萬"].dropna()
                     volume = float(mep_volume.iloc[0]) if not mep_volume.empty else 0.0
                     
@@ -913,9 +922,10 @@ class ConstructionDashboard:
             dealer_comp_stats = []
             
             unique_meps_in_filter = filtered_rel["水電公司"].unique()
-            mep_vol_map_filtered = {mep: filtered_df.loc[filtered_df['水電公司'] == mep, '年使用量_萬'].iloc[0] 
+            # 修正：確保 mep_vol_map_filtered 只包含 filtered_df 中存在的 mep
+            mep_vol_map_filtered = {mep: df.loc[df['水電公司'] == mep, '年使用量_萬'].iloc[0] 
                                     for mep in unique_meps_in_filter 
-                                    if not filtered_df.loc[filtered_df['水電公司'] == mep, '年使用量_萬'].empty}
+                                    if not df.loc[df['水電公司'] == mep, '年使用量_萬'].empty}
             
             total_market_volume = sum(v for v in mep_vol_map_filtered.values() if not pd.isna(v))
 
@@ -1032,7 +1042,7 @@ class ConstructionDashboard:
                                      if search_term.lower() in str(opt).lower()]
                 if not filtered_options:
                     st.warning(f"找不到包含 '{search_term}' 的公司")
-                    filtered_options = [] # 修正：搜尋不到時將列表設為空，避免選到不相關的項目
+                    filtered_options = []
             else:
                 filtered_options = options
             
@@ -1302,19 +1312,13 @@ class ConstructionDashboard:
     def _render_contractor_competitors(self, target: str, df: pd.DataFrame):
         """渲染營造公司競爭者分析"""
         UIComponents.render_section_header("競爭者分析")
+        comp_analyzer = CompetitorAnalyzer(df, pd.DataFrame(), {}) # 不需要 rel 和 mep_vol_map
+        competitors = comp_analyzer.water_competitors(target)
         
-        devs = df[df["營造公司"] == target]["建設公司"].dropna().unique()
-        if len(devs) == 0:
-            UIComponents.render_info_box("無共同建設公司資料，無法進行競爭分析")
-            return
-        
-        candidates = df[df["建設公司"].isin(devs)]
-        competitors = (candidates[candidates["營造公司"] != target]
-                       .groupby("營造公司").size()
-                       .reset_index(name="共同出現次數")
-                       .sort_values("共同出現次數", ascending=False))
-        
-        UIComponents.render_dataframe_with_styling(competitors, "競爭對手分析")
+        if competitors.empty:
+            UIComponents.render_info_box("暫無競爭者資料。")
+        else:
+            UIComponents.render_dataframe_with_styling(competitors, "競爭對手分析")
     
     def _render_mep_analysis(self, target: str, df: pd.DataFrame, rel: pd.DataFrame, 
                              brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
@@ -1372,24 +1376,22 @@ class ConstructionDashboard:
             st.markdown("**經銷商（配比與額度）**")
             UIComponents.render_info_box("暫無經銷商配比資料")
         
-        # 修正: 確保品牌資料篩選是針對當前水電公司
-        if not brand_rel.empty:
-            brand_sel = brand_rel[brand_rel["水電公司"] == target]
-            if not brand_sel.empty:
-                brand_ratio = (brand_sel.groupby("品牌")["配比"].mean()
-                               .reset_index().sort_values("配比", ascending=False))
-                brand_ratio["額度_萬"] = brand_ratio["配比"].astype(float) * vol_val
-                
-                brand_display = brand_ratio.copy()
-                brand_display["配比"] = brand_display["配比"].apply(Formatters.pct_str)
-                brand_display["額度_萬"] = brand_display["額度_萬"].round(2)
-                brand_display = brand_display.rename(columns={"額度_萬": "額度(萬)"})
-                
-                st.markdown("**線纜品牌（配比與額度）**")
-                UIComponents.render_dataframe_with_styling(brand_display)
-            else:
-                st.markdown("**線纜品牌（配比與額度）**")
-                UIComponents.render_info_box("暫無品牌配比資料")
+        brand_sel = brand_rel[brand_rel["水電公司"] == target]
+        if not brand_sel.empty:
+            brand_ratio = (brand_sel.groupby("品牌")["配比"].mean()
+                           .reset_index().sort_values("配比", ascending=False))
+            brand_ratio["額度_萬"] = brand_ratio["配比"].astype(float) * vol_val
+            
+            brand_display = brand_ratio.copy()
+            brand_display["配比"] = brand_display["配比"].apply(Formatters.pct_str)
+            brand_display["額度_萬"] = brand_display["額度_萬"].round(2)
+            brand_display = brand_display.rename(columns={"額度_萬": "額度(萬)"})
+            
+            st.markdown("**線纜品牌（配比與額度）**")
+            UIComponents.render_dataframe_with_styling(brand_display)
+        else:
+            st.markdown("**線纜品牌（配比與額度）**")
+            UIComponents.render_info_box("暫無品牌配比資料")
         
         memo = f"{vol_val} 萬" if vol_val > 0 else "—"
         UIComponents.render_info_box(f"預估年使用量：{memo}（已用於經銷商與品牌的金額換算）")
@@ -1499,18 +1501,20 @@ class ConstructionDashboard:
         # 篩選控制項
         col1, col2 = st.columns(2)
         
-        with col1:
+        cities_dealer = []
+        if "縣市" in df_sel.columns:
             cities_dealer = sorted([city for city in df_sel["縣市"].dropna().unique() if city])
-            selected_city_dealer = st.selectbox("選擇縣市", ["全部"] + cities_dealer, key="dealer_city_filter")
         
-        with col2:
-            areas_dealer = []
+        selected_city_dealer = st.selectbox("選擇縣市", ["全部"] + cities_dealer, key="dealer_city_filter")
+        
+        areas_dealer = []
+        if "區域" in df_sel.columns:
             if selected_city_dealer == "全部":
                 areas_dealer = sorted([area for area in df_sel["區域"].dropna().unique() if area])
             else:
                 city_areas_dealer = df_sel[df_sel["縣市"] == selected_city_dealer]["區域"].dropna().unique()
                 areas_dealer = sorted([area for area in city_areas_dealer if area])
-            selected_areas_dealer = st.multiselect("選擇區域", areas_dealer, key="dealer_area_filter")
+        selected_areas_dealer = st.multiselect("選擇區域", areas_dealer, key="dealer_area_filter")
 
         # 根據篩選條件過濾資料
         filtered_df_sel = df_sel.copy()
@@ -1521,17 +1525,21 @@ class ConstructionDashboard:
             filtered_df_sel = filtered_df_sel[filtered_df_sel["區域"].isin(selected_areas_dealer)]
         
         # 計算每個縣市/區域的獨特水電公司數量
-        client_by_location = filtered_df_sel.groupby(['縣市', '區域'])['水電公司'].nunique().reset_index(name='客戶家數')
+        client_by_location = pd.DataFrame()
+        if not filtered_df_sel.empty:
+            client_by_location = filtered_df_sel.groupby(['縣市', '區域'])['水電公司'].nunique().reset_index(name='客戶家數')
         
         # 計算佔比
-        if total_mep_clients > 0:
+        if total_mep_clients > 0 and not client_by_location.empty:
             client_by_location['客戶家數佔比'] = client_by_location['客戶家數'] / total_mep_clients
             client_by_location['客戶家數佔比'] = client_by_location['客戶家數佔比'].apply(Formatters.pct_str)
         else:
-            client_by_location['客戶家數佔比'] = "0.00%"
+            if not client_by_location.empty:
+                client_by_location['客戶家數佔比'] = "0.00%"
         
         # 修正表格排版
-        client_by_location = client_by_location.rename(columns={'客戶家數': '客戶數'})
+        if not client_by_location.empty:
+            client_by_location = client_by_location.rename(columns={'客戶家數': '客戶數'})
         
         # 排序並顯示結果
         if not client_by_location.empty:
