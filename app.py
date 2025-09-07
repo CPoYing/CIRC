@@ -13,6 +13,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union
 import warnings
+import json
+import requests
 
 import pandas as pd
 import numpy as np
@@ -164,7 +166,7 @@ class RelationshipAnalyzer:
         if total_volume <= 0 or not brand_weighted_sums:
             return pd.DataFrame(columns=["品牌", "加權平均配比"])
         
-        rows = [(brand, weighted_sum / total_volume) 
+        rows = [(brand, weighted_sum / total_volume)
                 for brand, weighted_sum in brand_weighted_sums.items()]
         
         return (pd.DataFrame(rows, columns=["品牌", "加權平均配比"])
@@ -511,41 +513,44 @@ class ConstructionDashboard:
         for key, (pos, names) in self.config.COLUMN_MAPPING.items():
             columns[key] = processor.get_col_by_pos_or_name(df_raw, pos, names)
         
-        required_cols = [columns['dev'], columns['con'], columns['mep']]
-        if any(col is None for col in required_cols):
+        required_cols_keys = ['dev', 'con', 'mep']
+        if not all(key in columns for key in required_cols_keys):
             st.error("找不到必要欄位（建設公司/營造公司/水電公司）。請確認資料格式。")
             st.stop()
         
-        rename_map = {
-            columns['dev']: "建設公司",
-            columns['con']: "營造公司", 
-            columns['mep']: "水電公司",
-            columns['vol']: "年使用量_萬",
-        }
-        
-        for suffix in ['a', 'b', 'c']:
-            dealer_key = f'dealer_{suffix}'
-            ratio_key = f'ratio_{suffix}'
-            brand_key = f'brand_{suffix}'
-            brand_ratio_key = f'brand_ratio_{suffix}'
-            
-            if columns.get(dealer_key):
-                rename_map[columns[dealer_key]] = f"經銷商{suffix.upper()}"
-            if columns.get(ratio_key):
-                rename_map[columns[ratio_key]] = f"經銷{suffix.upper()}比"
-            if columns.get(brand_key):
-                rename_map[columns[brand_key]] = f"品牌{suffix.upper()}"
-            if columns.get(brand_ratio_key):
-                rename_map[columns[brand_ratio_key]] = f"品牌{suffix.upper()}比"
-        
-        if columns.get('city'):
-            rename_map[columns['city']] = "縣市"
-        if columns.get('area'):
-            rename_map[columns['area']] = "區域"
+        rename_map = {}
+        for key, name in columns.items():
+            if key == 'dev':
+                rename_map[name] = "建設公司"
+            elif key == 'con':
+                rename_map[name] = "營造公司"
+            elif key == 'mep':
+                rename_map[name] = "水電公司"
+            elif key == 'vol':
+                rename_map[name] = "年使用量_萬"
+            elif key.startswith('dealer_'):
+                rename_map[name] = f"經銷商{key[-1].upper()}"
+            elif key.startswith('ratio_'):
+                rename_map[name] = f"經銷{key[-1].upper()}比"
+            elif key.startswith('brand_'):
+                if 'ratio' not in key:
+                    rename_map[name] = f"品牌{key[-1].upper()}"
+            elif key.startswith('brand_ratio_'):
+                rename_map[name] = f"品牌{key[-1].upper()}比"
+            elif key == 'city':
+                rename_map[name] = "縣市"
+            elif key == 'area':
+                rename_map[name] = "區域"
         
         df = df_raw.rename(columns=rename_map).copy()
         
-        text_cols = ["建設公司", "營造公司", "水電公司", "縣市", "區域"] + [f"經銷商{s}" for s in ['A','B','C']] + [f"品牌{s}" for s in ['A','B','C']]
+        text_cols = ["建設公司", "營造公司", "水電公司", "縣市", "區域"]
+        for suffix in ['A', 'B', 'C']:
+            if f"經銷商{suffix}" in df.columns:
+                text_cols.append(f"經銷商{suffix}")
+            if f"品牌{suffix}" in df.columns:
+                text_cols.append(f"品牌{suffix}")
+
         for col in text_cols:
             if col in df.columns:
                 df[col] = df[col].apply(processor.clean_name)
@@ -653,17 +658,25 @@ class ConstructionDashboard:
                 st.write("• 經銷商：客戶分布、市場競爭分析")
             st.stop()
         
-        df_raw = self.read_file(uploaded_file)
-        df, rel, brand_rel, mep_vol_map = self.process_data(df_raw)
-        
+        # 使用 session state 來儲存處理後的資料，避免每次互動都重複計算
+        if "df" not in st.session_state or st.session_state.get("uploaded_file_name") != uploaded_file.name:
+            st.session_state.uploaded_file_name = uploaded_file.name # 在這裡先賦值
+            with st.spinner("資料處理中，請稍候..."):
+                df_raw = self.read_file(uploaded_file)
+                st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map = self.process_data(df_raw)
+                st.session_state.df_raw = df_raw
+            st.success("資料處理完成！")
+            st.rerun()
+
+        # 當資料準備好後，顯示分頁
         tab_overview, tab_analysis = st.tabs(["📊 數據概覽", "🎯 分析設定"])
         
         with tab_overview:
-            self._render_overall_statistics(df, rel, brand_rel)
+            self._render_overall_statistics(st.session_state.df, st.session_state.rel, st.session_state.brand_rel)
         
         with tab_analysis:
-            self._render_analysis_settings(df, rel, brand_rel, mep_vol_map, df_raw)
-    
+            self._render_analysis_settings(st.session_state.df, st.session_state.rel, st.session_state.brand_rel, st.session_state.mep_vol_map, st.session_state.df_raw)
+
     def _render_overall_statistics(self, df: pd.DataFrame, rel: pd.DataFrame, brand_rel: pd.DataFrame):
         """渲染整體統計數據"""
         st.markdown("""
@@ -733,6 +746,8 @@ class ConstructionDashboard:
         with col4:
             st.metric("經銷商", f"{total_dealers:,}")
         
+        # ==================== 各品牌數據分析 ====================
+        st.markdown("---")
         st.markdown("#### 線纜品牌數據")
         
         # 篩選控制項
@@ -890,7 +905,127 @@ class ConstructionDashboard:
                                         st.markdown(detail, unsafe_allow_html=True)
         else:
             st.info("所選地區暫無線纜品牌數據")
-    
+
+        # ==================== 各經銷商市場競爭分析 ====================
+        st.markdown("---")
+        st.markdown("#### 各經銷商市場競爭分析")
+        
+        # 篩選控制項
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # 縣市篩選
+            cities_dealer_comp = sorted([city for city in df["縣市"].dropna().unique() if city])
+            selected_city_dealer_comp = st.selectbox("選擇縣市", ["全部"] + cities_dealer_comp, key="dealer_comp_city_filter")
+        
+        with col2:
+            # 區域篩選 - 根據選擇的縣市動態更新
+            if selected_city_dealer_comp == "全部":
+                areas_dealer_comp = sorted([area for area in df["區域"].dropna().unique() if area])
+            else:
+                city_areas_dealer_comp = df[df["縣市"] == selected_city_dealer_comp]["區域"].dropna().unique()
+                areas_dealer_comp = sorted([area for area in city_areas_dealer_comp if area])
+            # 多選區域
+            selected_areas_dealer_comp = st.multiselect("選擇區域", areas_dealer_comp, key="dealer_comp_area_filter")
+        
+        # 根據篩選條件過濾資料
+        filtered_rel = rel.copy()
+        filter_info_dealer_comp = []
+        
+        if selected_city_dealer_comp != "全部":
+            filtered_rel = filtered_rel[filtered_rel["縣市"] == selected_city_dealer_comp]
+            filter_info_dealer_comp.append(f"縣市: {selected_city_dealer_comp}")
+        
+        if selected_areas_dealer_comp:
+            filtered_rel = filtered_rel[filtered_rel["區域"].isin(selected_areas_dealer_comp)]
+            filter_info_dealer_comp.append(f"區域: {', '.join(selected_areas_dealer_comp)}")
+        
+        # 顯示篩選後的統計
+        col1, col2, col3 = st.columns([1, 1, 2])
+        if filter_info_dealer_comp:
+            st.info(f"已篩選: {', '.join(filter_info_dealer_comp)}")
+        else:
+            st.info("顯示全部地區數據")
+
+        # 計算經銷商數據
+        if not filtered_rel.empty:
+            dealer_comp_stats = []
+            total_market_volume = 0.0
+            
+            # 計算總市場量
+            unique_meps = filtered_rel["水電公司"].unique()
+            for mep in unique_meps:
+                mep_volume = df[df["水電公司"] == mep]["年使用量_萬"].dropna()
+                if len(mep_volume) > 0:
+                    total_market_volume += float(mep_volume.iloc[0])
+            
+            for dealer_name in filtered_rel["經銷商"].unique():
+                dealer_data = filtered_rel[filtered_rel["經銷商"] == dealer_name]
+                
+                unique_meps_for_dealer = dealer_data["水電公司"].unique()
+                total_weighted_volume = 0.0
+                
+                mep_details = []
+                for mep in unique_meps_for_dealer:
+                    mep_dealer_data = dealer_data[dealer_data["水電公司"] == mep]
+                    avg_ratio = mep_dealer_data["配比"].mean()
+                    
+                    mep_volume = df[df["水電公司"] == mep]["年使用量_萬"].dropna()
+                    volume = float(mep_volume.iloc[0]) if len(mep_volume) > 0 else 0.0
+                    weighted_vol = volume * float(avg_ratio or 0.0)
+                    
+                    total_weighted_volume += weighted_vol
+                    mep_details.append(f"**{mep}**: {weighted_vol:,.1f}萬 ({Formatters.pct_str(avg_ratio)})")
+                    
+                market_share = (total_weighted_volume / total_market_volume) if total_market_volume > 0 else 0.0
+                
+                dealer_comp_stats.append({
+                    "經銷商": dealer_name,
+                    "合作水電數": len(unique_meps_for_dealer),
+                    "加權年使用量_萬": total_weighted_volume,
+                    "市場占比": market_share,
+                    "mep_details": mep_details
+                })
+            
+            dealer_comp_stats = sorted(dealer_comp_stats, key=lambda x: x["加權年使用量_萬"], reverse=True)
+            
+            # 創建經銷商字卡
+            for i in range(0, len(dealer_comp_stats), 4):
+                cols = st.columns(4)
+                for j in range(4):
+                    idx = i + j
+                    if idx < len(dealer_comp_stats):
+                        dealer = dealer_comp_stats[idx]
+                        with cols[j]:
+                            volume_wan = dealer["加權年使用量_萬"]
+                            st.markdown(f"""
+                            <div style="
+                                padding: 16px;
+                                border: 1px solid #e0e0e0;
+                                border-radius: 8px;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                                text-align: center;
+                                min-height: 150px;
+                                display: flex;
+                                flex-direction: column;
+                                justify-content: space-between;
+                                background-color: #f9f9f9;
+                            ">
+                                <div style="font-size: 1.1rem; font-weight: bold; color: #333;">{dealer['經銷商']}</div>
+                                <div style="font-size: 2.5rem; font-weight: bold; color: #4CAF50; margin-top: 5px;">{volume_wan:,.1f}萬</div>
+                                <div style="font-size: 0.9rem; color: #666; margin-top: 10px;">
+                                    市場佔比：{Formatters.pct_str(dealer["市場占比"])}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            if dealer['合作水電數'] > 0:
+                                with st.expander(f"查看合作水電 ({dealer['合作水電數']:,})"):
+                                    for detail in dealer["mep_details"]:
+                                        st.markdown(detail, unsafe_allow_html=True)
+        else:
+            st.info("所選地區暫無經銷商數據")
+
     def _render_analysis_settings(self, df: pd.DataFrame, rel: pd.DataFrame, 
                                  brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
         """渲染分析設定區域"""
@@ -956,7 +1091,6 @@ class ConstructionDashboard:
             if target:
                 st.success(f"準備分析：{role} - {target}")
                 
-                # 將按鈕放在同一個窄欄位中
                 if st.button(
                     "🚀 開始分析",
                     type="primary",
@@ -968,13 +1102,12 @@ class ConstructionDashboard:
             else:
                 st.info("請選擇要分析的目標公司")
 
-        # 分析結果顯示在主頁面寬版區塊
         if "show_analysis" in st.session_state and st.session_state.show_analysis:
             st.markdown("---")
             st.markdown("### 📈 分析結果")
             self.render_role_analysis(st.session_state.analysis_role, 
                                       st.session_state.analysis_target, 
-                                      df, rel, brand_rel, mep_vol_map, df_raw)
+                                      df, rel, brand_rel, st.session_state.mep_vol_map, st.session_state.df_raw)
     
     def _create_share_table(self, df: pd.DataFrame, group_cols: List[str], name_col: str) -> pd.DataFrame:
         """創建份額分析表格"""
@@ -1295,55 +1428,11 @@ class ConstructionDashboard:
         up_stats = self._create_share_table(combined_partners, ["_公司"], "公司")
         UIComponents.render_dataframe_with_styling(up_stats)
     
-    def _render_mep_visualizations(self, rel_sel: pd.DataFrame, brand_rel: pd.DataFrame, 
-                                 target: str, vol_val: float):
-        """渲染水電公司視覺化內容"""
-        chart_type = st.radio("圖表類型", self.config.CHART_TYPES, horizontal=True, key="mep_chart_type")
-        
-        if not rel_sel.empty:
-            dealer_ratio = (rel_sel.groupby("經銷商")["配比"].mean()
-                            .reset_index().sort_values("配比", ascending=False))
-            dealer_ratio["額度_萬"] = dealer_ratio["配比"].astype(float) * vol_val
-            dealer_chart_data = dealer_ratio.rename(columns={"額度_萬": "金額(萬)"})
-            
-            fig = ChartGenerator.create_chart(
-                dealer_chart_data, "經銷商", "金額(萬)",
-                "水電公司 → 終端經銷商 金額(萬)", chart_type, key_suffix="mep_dealer"
-            )
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-        
-        if not brand_rel.empty:
-            brand_sel = brand_rel[brand_rel["水電公司"] == target]
-            if not brand_sel.empty:
-                brand_ratio = (brand_sel.groupby("品牌")["配比"].mean()
-                               .reset_index().sort_values("配比", ascending=False))
-                brand_ratio["額度_萬"] = brand_ratio["配比"].astype(float) * vol_val
-                brand_chart_data = brand_ratio.rename(columns={"額度_萬": "金額(萬)"})
-                
-                fig = ChartGenerator.create_chart(
-                    brand_chart_data, "品牌", "金額(萬)",
-                    "水電公司 → 線纜品牌 金額(萬)", chart_type, key_suffix="mep_brand"
-                )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
-    
-    def _render_mep_competitors(self, target: str, df: pd.DataFrame):
-        """渲染水電公司競爭者分析"""
-        UIComponents.render_section_header("競爭者分析")
-        
-        analyzer = CompetitorAnalyzer(df, pd.DataFrame(), {})
-        competitors = analyzer.water_competitors(target)
-        
-        if competitors.empty:
-            UIComponents.render_info_box("暫無競爭者資料")
-        else:
-            UIComponents.render_dataframe_with_styling(competitors, "競爭對手分析")
-    
     def _render_dealer_analysis(self, target: str, df: pd.DataFrame, rel: pd.DataFrame,
                                  mep_vol_map: Dict, analyzer: RelationshipAnalyzer, 
                                  comp_analyzer: CompetitorAnalyzer, df_raw: pd.DataFrame):
         """渲染經銷商的分析結果"""
+        # 合併經銷商和主檔資料
         df_sel = rel[rel["經銷商"] == target].merge(
             df, on=["建設公司", "營造公司", "水電公司"], how="left", suffixes=("", "_df")
         )
@@ -1376,6 +1465,9 @@ class ConstructionDashboard:
         
         mep_stats = self._create_share_table(df_sel, ["水電公司"], "水電公司")
         
+        # 取得該經銷商的總客戶家數
+        total_mep_clients = df_sel["水電公司"].nunique()
+        
         ratio_df = (rel[rel["經銷商"] == target]
                     .groupby("水電公司")["配比"].mean()
                     .reset_index()
@@ -1386,6 +1478,56 @@ class ConstructionDashboard:
             mep_stats = mep_stats.merge(ratio_df, on="水電公司", how="left")
         
         UIComponents.render_dataframe_with_styling(mep_stats)
+
+        # 新增的分析功能：客戶掌握能力
+        st.markdown("---")
+        st.markdown("### 客戶掌握能力分析")
+        
+        # 篩選控制項
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # 縣市篩選
+            cities_dealer = sorted([city for city in df_sel["縣市"].dropna().unique() if city])
+            selected_city_dealer = st.selectbox("選擇縣市", ["全部"] + cities_dealer, key="dealer_city_filter")
+        
+        with col2:
+            # 區域篩選 - 根據選擇的縣市動態更新
+            if selected_city_dealer == "全部":
+                areas_dealer = sorted([area for area in df_sel["區域"].dropna().unique() if area])
+            else:
+                city_areas_dealer = df_sel[df_sel["縣市"] == selected_city_dealer]["區域"].dropna().unique()
+                areas_dealer = sorted([area for area in city_areas_dealer if area])
+            # 多選區域
+            selected_areas_dealer = st.multiselect("選擇區域", areas_dealer, key="dealer_area_filter")
+
+        # 根據篩選條件過濾資料
+        filtered_df_sel = df_sel.copy()
+        if selected_city_dealer != "全部":
+            filtered_df_sel = filtered_df_sel[filtered_df_sel["縣市"] == selected_city_dealer]
+        
+        if selected_areas_dealer:
+            filtered_df_sel = filtered_df_sel[filtered_df_sel["區域"].isin(selected_areas_dealer)]
+        
+        # 計算每個縣市/區域的獨特水電公司數量
+        client_by_location = filtered_df_sel.groupby(['縣市', '區域'])['水電公司'].nunique().reset_index(name='客戶家數')
+        
+        # 計算佔比
+        if total_mep_clients > 0:
+            client_by_location['客戶家數佔比'] = client_by_location['客戶家數'] / total_mep_clients
+            client_by_location['客戶家數佔比'] = client_by_location['客戶家數佔比'].apply(Formatters.pct_str)
+        else:
+            client_by_location['客戶家數佔比'] = "0.00%"
+        
+        # 修正表格排版
+        client_by_location = client_by_location.rename(columns={'客戶家數': '客戶數'})
+        
+        # 排序並顯示結果
+        if not client_by_location.empty:
+            client_by_location = client_by_location.sort_values('客戶數', ascending=False).reset_index(drop=True)
+            UIComponents.render_dataframe_with_styling(client_by_location, "各區域客戶分佈")
+        else:
+            UIComponents.render_info_box("暫無按縣市/區域的客戶資料")
     
     def _render_dealer_visualizations(self, df_sel: pd.DataFrame):
         """渲染經銷商視覺化內容"""
@@ -1447,7 +1589,7 @@ class ConstructionDashboard:
             file_name=f"construction_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
+    
 # ====================== 應用程式進入點 ======================
 def main():
     """應用程式主要進入點"""
@@ -1456,6 +1598,12 @@ def main():
         st.session_state.show_analysis = False
         st.session_state.analysis_role = None
         st.session_state.analysis_target = None
+        st.session_state.df = None
+        st.session_state.rel = None
+        st.session_state.brand_rel = None
+        st.session_state.mep_vol_map = None
+        st.session_state.df_raw = None
+        st.session_state.uploaded_file_name = None
         
     try:
         dashboard = ConstructionDashboard()
