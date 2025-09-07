@@ -13,8 +13,6 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union
 import warnings
-import json
-import requests
 
 import pandas as pd
 import numpy as np
@@ -915,50 +913,48 @@ class ConstructionDashboard:
         
         with col1:
             # 縣市篩選
-            cities_dealer_comp = sorted([city for city in df["縣市"].dropna().unique() if city])
+            cities_dealer_comp = sorted([city for city in rel["縣市"].dropna().unique() if city])
             selected_city_dealer_comp = st.selectbox("選擇縣市", ["全部"] + cities_dealer_comp, key="dealer_comp_city_filter")
         
         with col2:
             # 區域篩選 - 根據選擇的縣市動態更新
             if selected_city_dealer_comp == "全部":
-                areas_dealer_comp = sorted([area for area in df["區域"].dropna().unique() if area])
+                areas_dealer_comp = sorted([area for area in rel["區域"].dropna().unique() if area])
             else:
-                city_areas_dealer_comp = df[df["縣市"] == selected_city_dealer_comp]["區域"].dropna().unique()
+                city_areas_dealer_comp = rel[rel["縣市"] == selected_city_dealer_comp]["區域"].dropna().unique()
                 areas_dealer_comp = sorted([area for area in city_areas_dealer_comp if area])
             # 多選區域
             selected_areas_dealer_comp = st.multiselect("選擇區域", areas_dealer_comp, key="dealer_comp_area_filter")
         
         # 根據篩選條件過濾資料
         filtered_rel = rel.copy()
-        filter_info_dealer_comp = []
-        
         if selected_city_dealer_comp != "全部":
             filtered_rel = filtered_rel[filtered_rel["縣市"] == selected_city_dealer_comp]
-            filter_info_dealer_comp.append(f"縣市: {selected_city_dealer_comp}")
         
         if selected_areas_dealer_comp:
             filtered_rel = filtered_rel[filtered_rel["區域"].isin(selected_areas_dealer_comp)]
-            filter_info_dealer_comp.append(f"區域: {', '.join(selected_areas_dealer_comp)}")
-        
-        # 顯示篩選後的統計
-        col1, col2, col3 = st.columns([1, 1, 2])
-        if filter_info_dealer_comp:
-            st.info(f"已篩選: {', '.join(filter_info_dealer_comp)}")
-        else:
-            st.info("顯示全部地區數據")
 
-        # 計算經銷商數據
-        if not filtered_rel.empty:
+        if filtered_rel.empty:
+            st.info("所選地區暫無經銷商數據")
+        else:
+            # 顯示篩選後的統計
+            filter_info_dealer_comp = []
+            if selected_city_dealer_comp != "全部":
+                filter_info_dealer_comp.append(f"縣市: {selected_city_dealer_comp}")
+            if selected_areas_dealer_comp:
+                filter_info_dealer_comp.append(f"區域: {', '.join(selected_areas_dealer_comp)}")
+            
+            st.info(f"篩選結果：共 {len(filtered_rel):,} 筆經銷商配比記錄")
+
+            # 計算經銷商數據
             dealer_comp_stats = []
             total_market_volume = 0.0
             
             # 計算總市場量
-            unique_meps = filtered_rel["水電公司"].unique()
-            for mep in unique_meps:
-                mep_volume = df[df["水電公司"] == mep]["年使用量_萬"].dropna()
-                if len(mep_volume) > 0:
-                    total_market_volume += float(mep_volume.iloc[0])
-            
+            unique_meps_in_filter = filtered_rel["水電公司"].unique()
+            mep_vol_map_filtered = {mep: st.session_state.mep_vol_map.get(mep, 0.0) for mep in unique_meps_in_filter}
+            total_market_volume = sum(v for v in mep_vol_map_filtered.values() if not pd.isna(v))
+
             for dealer_name in filtered_rel["經銷商"].unique():
                 dealer_data = filtered_rel[filtered_rel["經銷商"] == dealer_name]
                 
@@ -970,8 +966,8 @@ class ConstructionDashboard:
                     mep_dealer_data = dealer_data[dealer_data["水電公司"] == mep]
                     avg_ratio = mep_dealer_data["配比"].mean()
                     
-                    mep_volume = df[df["水電公司"] == mep]["年使用量_萬"].dropna()
-                    volume = float(mep_volume.iloc[0]) if len(mep_volume) > 0 else 0.0
+                    mep_volume = st.session_state.mep_vol_map.get(mep, 0.0)
+                    volume = float(mep_volume) if not pd.isna(mep_volume) else 0.0
                     weighted_vol = volume * float(avg_ratio or 0.0)
                     
                     total_weighted_volume += weighted_vol
@@ -1023,9 +1019,7 @@ class ConstructionDashboard:
                                 with st.expander(f"查看合作水電 ({dealer['合作水電數']:,})"):
                                     for detail in dealer["mep_details"]:
                                         st.markdown(detail, unsafe_allow_html=True)
-        else:
-            st.info("所選地區暫無經銷商數據")
-
+    
     def _render_analysis_settings(self, df: pd.DataFrame, rel: pd.DataFrame, 
                                  brand_rel: pd.DataFrame, mep_vol_map: Dict, df_raw: pd.DataFrame):
         """渲染分析設定區域"""
