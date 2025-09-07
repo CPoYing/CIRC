@@ -659,7 +659,6 @@ class ConstructionDashboard:
                 st.write("• 經銷商：客戶分布、市場競爭分析")
             st.stop()
         
-        # 使用 session state 來儲存處理後的資料，避免每次互動都重複計算
         if "df" not in st.session_state or st.session_state.get("uploaded_file_name") != uploaded_file.name:
             st.session_state.uploaded_file_name = uploaded_file.name
             with st.spinner("資料處理中，請稍候..."):
@@ -1536,7 +1535,7 @@ class ConstructionDashboard:
             filtered_df_sel = filtered_df_sel[filtered_df_sel["區域"].isin(selected_areas_dealer)]
         
         client_by_location = pd.DataFrame()
-        if not filtered_df_sel.empty:
+        if not filtered_df_sel.empty and '縣市' in filtered_df_sel.columns and '區域' in filtered_df_sel.columns and '水電公司' in filtered_df_sel.columns:
             client_by_location = filtered_df_sel.groupby(['縣市', '區域'])['水電公司'].nunique().reset_index(name='客戶家數')
         
         if total_mep_clients > 0 and not client_by_location.empty:
@@ -1637,15 +1636,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
----
-
-### 下一步
-
-請你用這個新程式碼替換你的 `app.py` 檔案內容，然後再次運行應用程式。如果一切順利，程式應該能正常啟動。
-
-當你在「數據概覽」分頁選擇篩選條件時，請特別留意「偵錯資訊」區塊。這將告訴你：
-* **在未篩選時，`brand_rel` 總共有多少筆資料。**
-* **當你選擇「台北市」後，`filtered_brand_rel` 還剩下多少筆資料。**
-
-這將是我們解決問題的關鍵線索。如果你依然遇到問題，請將最新的錯誤訊息以及偵錯資訊的內容告訴我，我會根據這些資訊為你提供更精準的協助。
