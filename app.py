@@ -744,7 +744,7 @@ class ConstructionDashboard:
         with col4:
             st.metric("經銷商", f"{total_dealers:,}")
         
-        # ==================== 各品牌數據分析 ====================
+        # ==================== 線纜品牌數據分析 ====================
         st.markdown("---")
         st.markdown("#### 線纜品牌數據")
         
@@ -752,36 +752,30 @@ class ConstructionDashboard:
         col1, col2 = st.columns(2)
         
         with col1:
-            # 縣市篩選
-            cities = sorted([city for city in df["縣市"].dropna().unique() if city])
-            selected_city = st.selectbox("選擇縣市", ["全部"] + cities, key="city_filter")
+            cities_brand = sorted([city for city in df["縣市"].dropna().unique() if city])
+            selected_city_brand = st.selectbox("選擇縣市", ["全部"] + cities_brand, key="brand_city_filter")
         
         with col2:
-            # 區域篩選 - 根據選擇的縣市動態更新
-            if selected_city == "全部":
-                areas = sorted([area for area in df["區域"].dropna().unique() if area])
+            if selected_city_brand == "全部":
+                areas_brand = sorted([area for area in df["區域"].dropna().unique() if area])
             else:
-                city_areas = df[df["縣市"] == selected_city]["區域"].dropna().unique()
-                areas = sorted([area for area in city_areas if area])
-            # 多選區域
-            selected_areas = st.multiselect("選擇區域", areas, key="area_filter")
+                city_areas_brand = df[df["縣市"] == selected_city_brand]["區域"].dropna().unique()
+                areas_brand = sorted([area for area in city_areas_brand if area])
+            selected_areas_brand = st.multiselect("選擇區域", areas_brand, key="brand_area_filter")
         
-        # 根據篩選條件過濾品牌數據
         filtered_brand_rel = brand_rel.copy()
         filter_info = []
         
-        if selected_city != "全部":
-            filtered_brand_rel = filtered_brand_rel[filtered_brand_rel["縣市"] == selected_city]
-            filter_info.append(f"縣市: {selected_city}")
+        if selected_city_brand != "全部":
+            filtered_brand_rel = filtered_brand_rel[filtered_brand_rel["縣市"] == selected_city_brand]
+            filter_info.append(f"縣市: {selected_city_brand}")
         
-        if selected_areas:
-            filtered_brand_rel = filtered_brand_rel[filtered_brand_rel["區域"].isin(selected_areas)]
-            filter_info.append(f"區域: {', '.join(selected_areas)}")
+        if selected_areas_brand:
+            filtered_brand_rel = filtered_brand_rel[filtered_brand_rel["區域"].isin(selected_areas_brand)]
+            filter_info.append(f"區域: {', '.join(selected_areas_brand)}")
         
-        # 計算篩選後的品牌統計
         filtered_total_brands = filtered_brand_rel["品牌"].nunique() if not filtered_brand_rel.empty else 0
         
-        # 計算篩選後的金額總數
         filtered_total_amount = 0.0
         if not filtered_brand_rel.empty:
             unique_meps = filtered_brand_rel["水電公司"].unique()
@@ -790,7 +784,6 @@ class ConstructionDashboard:
                 if len(mep_volume) > 0:
                     filtered_total_amount += float(mep_volume.iloc[0])
         
-        # 顯示篩選後的統計 - 調整版面
         col1, col2, col3 = st.columns([1, 1, 2])
         
         with col1:
@@ -803,46 +796,33 @@ class ConstructionDashboard:
             st.metric("年使用量總額", f"{filtered_total_amount:,.1f}萬")
         
         with col3:
-            # 顯示篩選條件
             if filter_info:
                 st.info(f"已篩選: {', '.join(filter_info)}")
             else:
                 st.info("顯示全部地區數據")
         
-        # 顯示品牌字卡
         if not filtered_brand_rel.empty:
             st.markdown("**各品牌數據分析**")
-            
-            # 計算篩選結果總數
             total_filtered_records = len(filtered_brand_rel)
             st.info(f"篩選結果：共 {total_filtered_records:,} 筆品牌配比記錄")
             
-            # 計算各品牌的加權統計（去重水電）
             brand_stats = []
-            total_market_volume = 0.0  # 用於計算占比
-            
-            # 先計算總市場量（去重水電）
-            unique_meps = filtered_brand_rel["水電公司"].unique()
-            for mep in unique_meps:
+            total_market_volume = 0.0
+            unique_meps_overall = df["水電公司"].unique()
+            for mep in unique_meps_overall:
                 mep_volume = df[df["水電公司"] == mep]["年使用量_萬"].dropna()
                 if len(mep_volume) > 0:
                     total_market_volume += float(mep_volume.iloc[0])
             
-            # 計算各品牌統計（每間水電只算一次）
             for brand_name in filtered_brand_rel["品牌"].unique():
                 brand_data = filtered_brand_rel[filtered_brand_rel["品牌"] == brand_name]
-                
-                # 去重計算：每間水電只計算一次
                 unique_meps_for_brand = brand_data["水電公司"].unique()
                 total_weighted_volume = 0.0
                 
-                mep_details = []  # 新增此列表來儲存詳細資訊
+                mep_details = []
                 for mep in unique_meps_for_brand:
-                    # 該水電對此品牌的平均配比
                     mep_brand_data = brand_data[brand_data["水電公司"] == mep]
                     avg_ratio = mep_brand_data["配比"].mean()
-                    
-                    # 該水電的年使用量
                     mep_volume = df[df["水電公司"] == mep]["年使用量_萬"].dropna()
                     volume = float(mep_volume.iloc[0]) if len(mep_volume) > 0 else 0.0
                     weighted_vol = volume * float(avg_ratio or 0.0)
@@ -850,7 +830,6 @@ class ConstructionDashboard:
                     total_weighted_volume += weighted_vol
                     mep_details.append(f"**{mep}**: {weighted_vol:,.1f}萬 ({Formatters.pct_str(avg_ratio)})")
                 
-                # 計算占比
                 market_share = (total_weighted_volume / total_market_volume) if total_market_volume > 0 else 0.0
                 
                 brand_stats.append({
@@ -858,13 +837,11 @@ class ConstructionDashboard:
                     "合作水電數": len(unique_meps_for_brand),
                     "加權年使用量_萬": total_weighted_volume,
                     "市場占比": market_share,
-                    "mep_details": mep_details # 將詳細資訊儲存到字典中
+                    "mep_details": mep_details
                 })
             
-            # 按加權年使用量排序
             brand_stats = sorted(brand_stats, key=lambda x: x["加權年使用量_萬"], reverse=True)
             
-            # 創建品牌字卡 - 每行4個
             for i in range(0, len(brand_stats), 4):
                 cols = st.columns(4)
                 for j in range(4):
@@ -873,8 +850,6 @@ class ConstructionDashboard:
                         brand = brand_stats[idx]
                         with cols[j]:
                             volume_wan = brand["加權年使用量_萬"]
-                            
-                            # 使用自訂的 HTML 和 CSS 樣式
                             st.markdown(f"""
                             <div style="
                                 padding: 16px;
@@ -896,7 +871,6 @@ class ConstructionDashboard:
                             </div>
                             """, unsafe_allow_html=True)
                             
-                            # 恢復使用可展開區塊顯示詳細資訊
                             if brand['合作水電數'] > 0:
                                 with st.expander(f"查看合作水電 ({brand['合作水電數']:,})"):
                                     for detail in brand["mep_details"]:
@@ -912,32 +886,27 @@ class ConstructionDashboard:
         col1, col2 = st.columns(2)
         
         with col1:
-            # 縣市篩選
             cities_dealer_comp = sorted([city for city in rel["縣市"].dropna().unique() if city])
             selected_city_dealer_comp = st.selectbox("選擇縣市", ["全部"] + cities_dealer_comp, key="dealer_comp_city_filter")
         
         with col2:
-            # 區域篩選 - 根據選擇的縣市動態更新
             if selected_city_dealer_comp == "全部":
                 areas_dealer_comp = sorted([area for area in rel["區域"].dropna().unique() if area])
             else:
                 city_areas_dealer_comp = rel[rel["縣市"] == selected_city_dealer_comp]["區域"].dropna().unique()
                 areas_dealer_comp = sorted([area for area in city_areas_dealer_comp if area])
-            # 多選區域
             selected_areas_dealer_comp = st.multiselect("選擇區域", areas_dealer_comp, key="dealer_comp_area_filter")
         
-        # 根據篩選條件過濾資料
         filtered_rel = rel.copy()
         if selected_city_dealer_comp != "全部":
             filtered_rel = filtered_rel[filtered_rel["縣市"] == selected_city_dealer_comp]
         
         if selected_areas_dealer_comp:
             filtered_rel = filtered_rel[filtered_rel["區域"].isin(selected_areas_dealer_comp)]
-
+        
         if filtered_rel.empty:
             st.info("所選地區暫無經銷商數據")
         else:
-            # 顯示篩選後的統計
             filter_info_dealer_comp = []
             if selected_city_dealer_comp != "全部":
                 filter_info_dealer_comp.append(f"縣市: {selected_city_dealer_comp}")
@@ -946,13 +915,11 @@ class ConstructionDashboard:
             
             st.info(f"篩選結果：共 {len(filtered_rel):,} 筆經銷商配比記錄")
 
-            # 計算經銷商數據
             dealer_comp_stats = []
             total_market_volume = 0.0
             
-            # 計算總市場量
             unique_meps_in_filter = filtered_rel["水電公司"].unique()
-            mep_vol_map_filtered = {mep: st.session_state.mep_vol_map.get(mep, 0.0) for mep in unique_meps_in_filter}
+            mep_vol_map_filtered = {mep: df.loc[df['水電公司'] == mep, '年使用量_萬'].iloc[0] for mep in unique_meps_in_filter if not df.loc[df['水電公司'] == mep, '年使用量_萬'].empty}
             total_market_volume = sum(v for v in mep_vol_map_filtered.values() if not pd.isna(v))
 
             for dealer_name in filtered_rel["經銷商"].unique():
@@ -966,8 +933,7 @@ class ConstructionDashboard:
                     mep_dealer_data = dealer_data[dealer_data["水電公司"] == mep]
                     avg_ratio = mep_dealer_data["配比"].mean()
                     
-                    mep_volume = st.session_state.mep_vol_map.get(mep, 0.0)
-                    volume = float(mep_volume) if not pd.isna(mep_volume) else 0.0
+                    volume = mep_vol_map_filtered.get(mep, 0.0)
                     weighted_vol = volume * float(avg_ratio or 0.0)
                     
                     total_weighted_volume += weighted_vol
@@ -985,7 +951,6 @@ class ConstructionDashboard:
             
             dealer_comp_stats = sorted(dealer_comp_stats, key=lambda x: x["加權年使用量_萬"], reverse=True)
             
-            # 創建經銷商字卡
             for i in range(0, len(dealer_comp_stats), 4):
                 cols = st.columns(4)
                 for j in range(4):
@@ -1481,18 +1446,15 @@ class ConstructionDashboard:
         col1, col2 = st.columns(2)
         
         with col1:
-            # 縣市篩選
             cities_dealer = sorted([city for city in df_sel["縣市"].dropna().unique() if city])
             selected_city_dealer = st.selectbox("選擇縣市", ["全部"] + cities_dealer, key="dealer_city_filter")
         
         with col2:
-            # 區域篩選 - 根據選擇的縣市動態更新
             if selected_city_dealer == "全部":
                 areas_dealer = sorted([area for area in df_sel["區域"].dropna().unique() if area])
             else:
                 city_areas_dealer = df_sel[df_sel["縣市"] == selected_city_dealer]["區域"].dropna().unique()
                 areas_dealer = sorted([area for area in city_areas_dealer if area])
-            # 多選區域
             selected_areas_dealer = st.multiselect("選擇區域", areas_dealer, key="dealer_area_filter")
 
         # 根據篩選條件過濾資料
